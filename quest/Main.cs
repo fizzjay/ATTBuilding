@@ -1,5 +1,6 @@
 
 using System;
+using ATTBuilding; // shared/ types (BuildState, CommandParser, TrackedRegistry, VectorSnap): sibling namespace, not visible unqualified without this
 using HarmonyLib;
 using MelonLoader;
 using MelonLoader.Utils;

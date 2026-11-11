@@ -86,6 +86,15 @@ def test_reported_build_errors_stay_fixed():
         for bad in ("_console.outputBuffer", "_console.outputField", "_console.CopyBufferToOutput()", "rc.logFilter"):
             assert bad not in hook, (proj, bad)
         assert 'GetMember(_console, "outputBuffer")' in hook and 'SetMember(rc, "logFilter", 0)' in hook
+    # Shared types live in namespace ATTBuilding; quest code is in the
+    # sibling ATTBuildingQuest, so any quest file naming one must import it
+    # (the PC files share the namespace and need no using).
+    shared_types = ("BuildState", "TrackedRegistry", "VectorSnap", "ParsedCommand", "CommandParser")
+    for name in ("Main.cs", "ConsoleHook.cs", "Spawner.cs", "BuildMode.cs"):
+        src = read(f"quest/{name}")
+        assert any(s in src for s in shared_types), name
+        assert "using ATTBuilding;" in src, name
+    assert "namespace ATTBuilding" in read("shared/BuildState.cs")
     # Reflection helpers must be reachable from ConsoleOpener (same file,
     # different class): internal, and the cross-class call is qualified.
     for proj in ("pchost", "quest"):

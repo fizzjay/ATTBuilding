@@ -1,5 +1,6 @@
 
 using System;
+using ATTBuilding; // shared/ types (BuildState, CommandParser, TrackedRegistry, VectorSnap): sibling namespace, not visible unqualified without this
 using Il2Cpp;
 using Il2CppAlta.Networking;
 using Il2CppAlta.Networking.Scripts.Player;
