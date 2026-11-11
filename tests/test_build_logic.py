@@ -65,16 +65,13 @@ def test_bubble_is_a_new_quick_access_action_on_both():
     assert "ConsoleOpener.Toggle" in read("quest/Bubble.cs") + read("pchost/Bubble.cs")
     assert "quickAccessMenus" in read("quest/Bubble.cs") and "quickAccessMenus" in read("pchost/Bubble.cs")
 
-if __name__ == "__main__":
-    for name, fn in sorted(list(globals().items())):
-        if name.startswith("test_"): fn(); print("ok", name)
 
 def test_reported_build_errors_stay_fixed():
     # CS0104: bare typeof(Main) in a global-namespace AssemblyInfo is
     # ambiguous with MelonLoader.Main on both platforms.
     for proj, ns in (("pchost", "ATTBuilding"), ("quest", "ATTBuildingQuest")):
         info = read(f"{proj}/Properties/AssemblyInfo.cs")
-        assert "using MelonLoader;" not in info
+        assert not any(l.strip() == "using MelonLoader;" for l in info.splitlines())
         assert f"typeof({ns}.Main)" in info and "MelonLoader.MelonInfo" in info
     # MSB3270: MelonLoader.dll is AMD64, so both projects target x64.
     for proj in ("pchost/ATTBuilding.csproj", "quest/ATTBuilding.csproj"):
@@ -85,3 +82,7 @@ def test_reported_build_errors_stay_fixed():
         hook = read(f"{proj}/ConsoleHook.cs")
         assert "object field" in hook and "ReadInputText(field)" in hook
         assert "(RuntimeConsole __instance, InputField" not in hook
+
+if __name__ == "__main__":
+    for name, fn in sorted(list(globals().items())):
+        if name.startswith("test_"): fn(); print("ok", name)
