@@ -98,3 +98,14 @@ Each is isolated in one file per platform, deliberately:
   If MSB3270 still shows, do a Clean + Rebuild (an up-to-date MSIL DLL in
   `bin/` can make the warning look current) and check Configuration Manager
   has no per-project platform override.
+
+- **`The name 'SetMember' does not exist in the current context`:** the
+  reflection helpers live on `ConsoleHook`, but `ConsoleOpener` (a separate
+  class in the same file) calls one. They are now `internal static` and the
+  cross-class call is qualified (`ConsoleHook.SetMember(...)`). If you copy
+  these classes into separate files, keep that qualification.
+- **Architecture warning, round 3:** a repo-root `Directory.Build.props` now
+  also forces `x64`, so the setting applies however the projects are built.
+  Know that MSB3270 is a *warning only* here: MelonLoader loads mod DLLs as
+  managed IL into the (x64/ARM64) game process, and an AnyCPU/MSIL build
+  still runs -- the x64 target just silences the mismatch properly.

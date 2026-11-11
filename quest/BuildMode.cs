@@ -74,7 +74,7 @@ namespace ATTBuildingQuest
         {
             try
             {
-                if (pickup == null || pickup.WasCollected) return;
+                if (pickup == null) return;
                 if (BuildState.Snapping)
                 {
                     pickup.transform.rotation = VectorSnap.SnapRotation(pickup.transform.rotation, BuildState.AngleStepDegrees);

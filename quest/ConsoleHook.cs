@@ -117,7 +117,7 @@ namespace ATTBuildingQuest
             if (Mod.Log != null) Mod.Log.Msg("[console] " + line);
             try
             {
-                if (_console == null || _console.WasCollected) return;
+                if (_console == null) return;
                 // outputBuffer / outputField / CopyBufferToOutput are private
                 // fields on the Mono RuntimeConsole and interop properties on
                 // IL2CPP -- naming them directly only compiles on one build.
@@ -133,7 +133,7 @@ namespace ATTBuildingQuest
             catch (Exception ex) { Mod.LogOnce("console print: " + ex.Message); }
         }
 
-        private static object GetMember(object target, string name)
+        internal static object GetMember(object target, string name)
         {
             if (target == null) return null;
             const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
@@ -144,7 +144,7 @@ namespace ATTBuildingQuest
             return field == null ? null : field.GetValue(target);
         }
 
-        private static void SetMember(object target, string name, object value)
+        internal static void SetMember(object target, string name, object value)
         {
             if (target == null) return;
             const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
@@ -155,14 +155,14 @@ namespace ATTBuildingQuest
             if (field != null) field.SetValue(target, ConvertTo(field.FieldType, value));
         }
 
-        private static object ConvertTo(System.Type type, object value)
+        internal static object ConvertTo(System.Type type, object value)
         {
             if (value == null || type.IsInstanceOfType(value)) return value;
             if (type.IsEnum) return System.Enum.ToObject(type, value);
             return System.Convert.ChangeType(value, type);
         }
 
-        private static void Call(object target, string name, params object[] args)
+        internal static void Call(object target, string name, params object[] args)
         {
             const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
             foreach (var method in target.GetType().GetMethods(flags))
@@ -190,7 +190,7 @@ namespace ATTBuildingQuest
     internal static class ConsoleOpener
     {
         private static UnityEngine.GameObject _console;
-        internal static bool IsVisible { get { return _console != null && !_console.WasCollected && _console.activeInHierarchy; } }
+        internal static bool IsVisible { get { try { return _console != null && _console.activeInHierarchy; } catch { return false; } } }
 
         internal static string Toggle()
         {
@@ -226,7 +226,7 @@ foreach (UnityEngine.Object value in UnityEngine.Resources.FindObjectsOfTypeAll(
                 go.SetActive(true);
                 _console = go;
                 var rc = go.GetComponent<RuntimeConsole>();
-                if (rc != null) { try { SetMember(rc, "logFilter", 0); } catch { } }
+                if (rc != null) { try { ConsoleHook.SetMember(rc, "logFilter", 0); } catch { } }
                 return "ATT Building console open (" + how + "). Type: build help";
             }
             catch (Exception ex) { return "Console summon failed: " + ex; }

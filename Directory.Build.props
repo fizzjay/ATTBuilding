@@ -1,0 +1,10 @@
+<Project>
+  <!-- MelonLoader.dll is AMD64. Both mod projects already set this, but
+       Directory.Build.props is imported by every project built under this
+       repo, so the MSIL-vs-AMD64 warning (MSB3270) stays gone even if a
+       configuration/platform mapping drops the csproj PropertyGroup. -->
+  <PropertyGroup>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+  </PropertyGroup>
+</Project>
