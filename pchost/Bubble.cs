@@ -26,11 +26,6 @@ namespace ATTBuilding
                 _menuType = AccessTools.TypeByName("QuickAccessMenuController");
                 _actionType = AccessTools.TypeByName("QuickAccessMenuAction");
                 if (_menuType == null || _actionType == null) return "bubble: QuickAccess types not found in this build.";
-                foreach (string verb in new[] { "Run", "Open" })
-                {
-                    var m = AccessTools.Method(_actionType, verb);
-                    if (m != null) harmony.Patch(m, prefix: new HarmonyMethod(typeof(Bubble), nameof(ActionPrefix)));
-                }
                 var ignored = AccessTools.PropertyGetter(_actionType, "IsIgnored");
                 if (ignored != null) harmony.Patch(ignored, postfix: new HarmonyMethod(typeof(Bubble), nameof(IgnoredPostfix)));
                 _installed = true;
@@ -39,24 +34,52 @@ namespace ATTBuilding
             catch (Exception ex) { return "bubble: hook failed: " + ex.Message; }
         }
 
-        private static bool ActionPrefix(object __instance)
-        {
-            var obj = __instance as UnityEngine.Object;
-            if (obj == null || obj.GetInstanceID() != _ourActionId) return true;
-            string msg = ConsoleOpener.Toggle();
-            if (msg != null) Mod.Log.Msg(msg);
-            return false;
-        }
-
         private static void IgnoredPostfix(object __instance, ref bool __result)
         {
             var obj = __instance as UnityEngine.Object;
             if (obj != null && _ourActionId != 0 && obj.GetInstanceID() == _ourActionId) __result = false;
         }
 
+
+        internal static bool Added { get { return _clone != null; } }
+
+        // Polled activation (no Run/Open patches): edge-trigger on an
+        // open/active-style bool flip of our clone, then call its Close().
+        private static readonly string[] PriorityBools = { "IsOpen", "isOpen", "IsOpened", "Opened", "IsActive", "isActive", "Active", "IsSelected", "isSelected", "Selected", "IsOn", "IsToggled" };
+        private static readonly System.Collections.Generic.Dictionary<string, bool> _lastState = new System.Collections.Generic.Dictionary<string, bool>();
+        private static float _nextPoll;
+
+        private static void PollActivation()
+        {
+            var action = _clone as UnityEngine.Object;
+            if (action == null || Time.unscaledTime < _nextPoll) return;
+            _nextPoll = Time.unscaledTime + 0.15f;
+            const BindingFlags f = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            foreach (var prop in action.GetType().GetProperties(f))
+            {
+                if (prop.PropertyType != typeof(bool) || !prop.CanRead) continue;
+                bool now; try { now = (bool)prop.GetValue(action, null); } catch { continue; }
+                bool before;
+                if (!_lastState.TryGetValue(prop.Name, out before)) { _lastState[prop.Name] = now; continue; }
+                if (now == before) continue;
+                _lastState[prop.Name] = now;
+                Diag.Log("bubble: action state " + prop.Name + ": " + before + " -> " + now);
+                if (now && System.Array.IndexOf(PriorityBools, prop.Name) >= 0)
+                {
+                    Diag.Log("bubble: activated via " + prop.Name + " -- toggling console.");
+                    string msg = ConsoleOpener.Toggle();
+                    if (msg != null) Mod.Log.Msg(msg);
+                    try { var close = action.GetType().GetMethod("Close", f); if (close != null) close.Invoke(action, null); } catch { }
+                    _lastState.Clear();
+                }
+            }
+        }
+
         internal static void Tick()
         {
-            if (!_installed || Time.unscaledTime < _nextScan) return;
+            if (!_installed || !Mod.BubbleEnabled) return;
+            try { PollActivation(); } catch (Exception ex) { Diag.FileOnly("poll: " + ex.Message); }
+            if (Time.unscaledTime < _nextScan) return;
             _nextScan = Time.unscaledTime + 1f;
             var local = PlayerController.Current;
             if (local == null || local.NetworkPlayer == null) return;

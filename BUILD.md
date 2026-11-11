@@ -138,3 +138,27 @@ every menu rebuild. It now clones only a ScriptableObject action asset
 (the native Equipment Mode action, as ArmorUpdate does), reuses that one
 clone, and adds nothing if no asset template is loaded. The old
 `ArmorQuest.dll` in the same log uses the same safe pattern.
+
+## 0.2.0 crash hunt (game closes, guaranteed on opening the wrist menu)
+
+Hypothesis, from ArmorUpdate's own comment ("leave Run/Open/Close/IsValid
+untouched"): our Harmony prefixes on `QuickAccessMenuAction.Run/Open` --
+which the controller calls *while the menu opens* -- were the crash. 0.2.0
+therefore contains **no Run/Open patches at all**. The bubble is revealed
+with Armor's `IsIgnored` postfix (proven in the same log by ArmorRestored),
+and activation is detected by polling our clone's bool state for an
+open/active flip, then calling the action's own `Close()`.
+
+Logging added (this is the part that ends the guessing):
+- `UserData/ATTBuilding/debug.log` -- init line, a one-time dump of the real
+  `QuickAccessMenuAction` method/bool-member surface on your game build,
+  every bubble milestone, every action state change, and a 20 s heartbeat.
+- `UserData/ATTBuilding/crumb.txt` -- last milestone reached (native crashes
+  show nothing in the Melon log; these two files are the evidence).
+- Preferences (editable in TavernEssentials' Mods board): `BubbleEnabled`
+  and `ConsoleEnabled`. To bisect: turn `BubbleEnabled` off, restart -- if
+  it still closes, turn `ConsoleEnabled` off too and tell us which pair
+  reproduces it.
+
+If 0.2.0 still closes on menu open, send `debug.log` + `crumb.txt`: the API
+dump and state changes in there name the exact member/method involved.

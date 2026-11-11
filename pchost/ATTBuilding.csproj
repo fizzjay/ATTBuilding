@@ -60,6 +60,7 @@
     <Compile Include="Bubble.cs" />
     <Compile Include="BuildMode.cs" />
     <Compile Include="ConsoleHook.cs" />
+    <Compile Include="Diag.cs" />
     <Compile Include="Main.cs" />
     <Compile Include="ServerCommands.cs" />
     <Compile Include="Spawner.cs" />

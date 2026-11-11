@@ -86,6 +86,17 @@ def test_reported_build_errors_stay_fixed():
         for bad in ("_console.outputBuffer", "_console.outputField", "_console.CopyBufferToOutput()", "rc.logFilter"):
             assert bad not in hook, (proj, bad)
         assert 'GetMember(_console, "outputBuffer")' in hook and 'SetMember(rc, "logFilter", 0)' in hook
+    # Crash discipline, round 2 (crash ON menu open): no Harmony patches on
+    # QuickAccessMenuAction Run/Open in either build (ArmorUpdate leaves
+    # Run/Open/Close untouched) -- activation is polled bool state instead.
+    for proj in ("pchost", "quest"):
+        bubble = read(f"{proj}/Bubble.cs")
+        assert "ActionPrefix" not in bubble, proj
+        assert "PollActivation" in bubble and "PriorityBools" in bubble
+        assert "BubbleEnabled" in bubble  # pref kill-switch honoured
+    assert "DumpActionApi" in read("quest/Bubble.cs")  # real API -> debug.log
+    assert "Diag.cs" in read("quest/ATTBuilding.csproj") and "Diag.cs" in read("pchost/ATTBuilding.csproj")
+    assert "debug.log" in read("quest/Diag.cs")
     # Crash discipline (Quest hard-close ~90s in): the bubble must clone a
     # ScriptableObject action ASSET (ArmorUpdate's EquipmentMenu), never the
     # first scene entry of quickAccessMenus, and must reuse its one clone.

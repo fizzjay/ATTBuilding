@@ -30,26 +30,107 @@ namespace ATTBuildingQuest
         {
             try
             {
-                var type = typeof(QuickAccessMenuAction);
-                foreach (string verb in new[] { "Run", "Open" })
-                {
-                    var m = AccessTools.Method(type, verb);
-                    if (m != null) harmony.Patch(m, prefix: new HarmonyMethod(typeof(Bubble), nameof(ActionPrefix)));
-                }
-                var ignored = AccessTools.PropertyGetter(type, "IsIgnored");
+                var ignored = AccessTools.PropertyGetter(typeof(QuickAccessMenuAction), "IsIgnored");
                 if (ignored != null) harmony.Patch(ignored, postfix: new HarmonyMethod(typeof(Bubble), nameof(IgnoredPostfix)));
                 _installed = true;
-                return "bubble: quick-access 'ATT Building Console' hook ready (reopen the wrist menu after joining).";
+                DumpActionApi();
+                return "bubble: quick-access 'ATT Building Console' ready (activation is polled, Run/Open are NOT patched).";
             }
             catch (Exception ex) { return "bubble: hook failed: " + ex.Message; }
         }
 
-        private static bool ActionPrefix(QuickAccessMenuAction __instance)
+        internal static bool Added { get { return _action != null; } }
+
+        // One-time dump of the real QuickAccessMenuAction surface on THIS
+        // game build (methods + bool members) into debug.log.
+        private static void DumpActionApi()
         {
-            if (__instance == null || __instance.GetInstanceID() != _ourActionId) return true;
-            string msg = ConsoleOpener.Toggle();
-            if (msg != null) Mod.Log.Msg(msg);
-            return false; // never run the cloned native action's own behaviour
+            try
+            {
+                var type = typeof(QuickAccessMenuAction);
+                Diag.FileOnly("QuickAccessMenuAction methods:");
+                foreach (var m in type.GetMethods(Members))
+                    Diag.FileOnly("  m " + m.ReturnType.Name + " " + m.Name + "(" + string.Join(", ", Array.ConvertAll(m.GetParameters(), x => x.ParameterType.Name + " " + x.Name)) + ")");
+                Diag.FileOnly("QuickAccessMenuAction bool members:");
+                foreach (var m in BoolMembers(type)) Diag.FileOnly("  b " + m.Name);
+            }
+            catch (Exception ex) { Diag.FileOnly("api dump failed: " + ex.Message); }
+        }
+
+        private sealed class BoolMember
+        {
+            internal string Name; internal PropertyInfo Prop; internal FieldInfo Field;
+            internal bool Get(object target)
+            {
+                try { return Prop != null ? (bool)Prop.GetValue(target, null) : (bool)Field.GetValue(target); }
+                catch { return false; }
+            }
+        }
+
+        private static List<BoolMember> BoolMembers(System.Type type)
+        {
+            var list = new List<BoolMember>();
+            foreach (var prop in type.GetProperties(Members))
+                if (prop.PropertyType == typeof(bool) && prop.CanRead) list.Add(new BoolMember { Name = prop.Name, Prop = prop });
+            foreach (var field in type.GetFields(Members))
+                if (field.FieldType == typeof(bool)) list.Add(new BoolMember { Name = field.Name, Field = field });
+            return list;
+        }
+
+        // Activation WITHOUT patching Run/Open: poll our clone's bool state.
+        // Selecting a bubble flips an open/active-style bool on the action;
+        // we edge-trigger on the priority names below, summon the console,
+        // then call the action's own Close() (a plain method call, exactly
+        // what the game itself does) so it resets. Every state change is
+        // logged, so if no priority name flips, debug.log still shows which
+        // member DID -- tell us and we add it.
+        private static readonly string[] PriorityBools = { "IsOpen", "isOpen", "IsOpened", "Opened", "IsActive", "isActive", "Active", "IsSelected", "isSelected", "Selected", "IsOn", "IsToggled" };
+        private static List<BoolMember> _boolMembers;
+        private static readonly Dictionary<string, bool> _lastState = new Dictionary<string, bool>();
+        private static float _nextPoll;
+
+        private static void PollActivation()
+        {
+            if (_action == null || UnityEngine.Time.unscaledTime < _nextPoll) return;
+            _nextPoll = UnityEngine.Time.unscaledTime + 0.15f;
+            if (_boolMembers == null) { _boolMembers = BoolMembers(typeof(QuickAccessMenuAction)); Snapshot("initial"); return; }
+            foreach (var member in _boolMembers)
+            {
+                bool now = member.Get(_action);
+                bool before;
+                if (!_lastState.TryGetValue(member.Name, out before)) { _lastState[member.Name] = now; continue; }
+                if (now == before) continue;
+                _lastState[member.Name] = now;
+                Diag.Log("bubble: action state " + member.Name + ": " + before + " -> " + now);
+                if (now && Array.IndexOf(PriorityBools, member.Name) >= 0)
+                {
+                    Diag.Log("bubble: activated via " + member.Name + " -- toggling console.");
+                    string msg = ConsoleOpener.Toggle();
+                    if (msg != null) Mod.Log.Msg(msg);
+                    TryClose();
+                    Snapshot("after-close");
+                }
+            }
+        }
+
+        private static void Snapshot(string why)
+        {
+            _lastState.Clear();
+            if (_boolMembers == null || _action == null) return;
+            foreach (var member in _boolMembers) _lastState[member.Name] = member.Get(_action);
+            var parts = new List<string>();
+            foreach (var kv in _lastState) parts.Add(kv.Key + "=" + kv.Value);
+            Diag.FileOnly("bubble: state snapshot (" + why + "): " + string.Join(", ", parts.ToArray()));
+        }
+
+        private static void TryClose()
+        {
+            try
+            {
+                var close = AccessTools.Method(typeof(QuickAccessMenuAction), "Close");
+                if (close != null) { close.Invoke(_action, null); Diag.FileOnly("bubble: called action Close()."); }
+            }
+            catch (Exception ex) { Diag.FileOnly("bubble: Close() failed: " + ex.Message); }
         }
 
         private static void IgnoredPostfix(QuickAccessMenuAction __instance, ref bool __result)
@@ -59,9 +140,12 @@ namespace ATTBuildingQuest
 
         internal static void Tick()
         {
-            if (!_installed || Time.unscaledTime < _nextScan) return;
-            _nextScan = Time.unscaledTime + 1f;
-            if (_action != null && _menu == null) { Object.Destroy(_action); _action = null; _ourActionId = 0; }
+            if (!_installed || !Mod.BubbleEnabled) return;
+            try { PollActivation(); } catch (Exception ex) { Diag.FileOnly("poll: " + ex.Message); }
+            if (UnityEngine.Time.unscaledTime < _nextScan) return;
+            _nextScan = UnityEngine.Time.unscaledTime + 1f;
+            Crumb.At("bubble: scan");
+            if (_action != null && _menu == null) { Object.Destroy(_action); _action = null; _ourActionId = 0; _boolMembers = null; }
             var local = PlayerController.Current;
             if (local == null || local.NetworkPlayer == null) return;
             foreach (Object value in Resources.FindObjectsOfTypeAll(Il2CppType.Of<QuickAccessMenuController>()))
@@ -71,7 +155,7 @@ namespace ATTBuildingQuest
                     || menu.Controller.PlayerController == null
                     || menu.Controller.PlayerController.Pointer != local.Pointer) continue;
                 try { Ensure(menu, local); }
-                catch (Exception ex) { if (!_warned) { Mod.Log.Warning("bubble: " + ex.Message); _warned = true; } }
+                catch (Exception ex) { if (!_warned) { Mod.Log.Warning("bubble: " + ex.Message); _warned = true; } Diag.FileOnly("ensure: " + ex); }
             }
         }
 
@@ -113,7 +197,8 @@ namespace ATTBuildingQuest
             SetMenus(menu, updated);
             _menu = menu;
             Crumb.At("bubble: added");
-            Mod.Log.Msg("bubble: 'ATT Building Console' added to the wrist menu; reopen it and pick Building.");
+            Diag.Log("bubble: 'ATT Building Console' added to the wrist menu (id " + _ourActionId + "); reopen it and pick Building.");
+            _boolMembers = null; Snapshot("added");
         }
 
         private static QuickAccessMenuAction FindTemplate()
