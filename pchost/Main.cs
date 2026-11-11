@@ -7,7 +7,7 @@ using System.IO;
 
 namespace ATTBuilding
 {
-    public class Main : MelonMod
+    public class ATTBuildingMod : MelonMod
     {
         private bool _running;
         public override void OnInitializeMelon()

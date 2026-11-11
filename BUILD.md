@@ -75,3 +75,26 @@ Each is isolated in one file per platform, deliberately:
   argument as `object field` (injected by parameter name) and reads
   `InputText`/`SetText` by reflection. Do not "fix" this by re-adding a
   using for it in one project only.
+
+- **`'RuntimeConsole' does not contain a definition for 'outputBuffer' /
+  'outputField' / 'CopyBufferToOutput' / 'logFilter'`, and
+  `'GameObject'/'Pickup' does not contain a definition for 'WasCollected'`:**
+  those members only exist on the IL2CPP interop surface -- Il2CppInterop
+  exposes the game's private fields as public properties, and every interop
+  object carries `WasCollected`. On Mono the fields are private and Unity
+  objects have no `WasCollected`. Fixed structurally: PC uses Unity's
+  `== null` destroyed-object check, and *both* builds now reach the console's
+  buffer/field/log-filter purely by reflection (`GetMember`/`SetMember`/
+  `Call` in `ConsoleHook.cs`), which works against private Mono fields and
+  interop properties alike. Do not reintroduce direct member access copied
+  from IL2CPP decompilations into `pchost/`.
+- **`'Main' is an ambiguous reference...` (again):** the entry class has been
+  renamed `ATTBuildingMod` on both platforms, so no file can collide with
+  `MelonLoader.Main` again. If you still see CS0104, you have a stale
+  duplicate `AssemblyInfo.cs` (e.g. in `obj/` or a second Properties folder)
+  referencing `Main` -- delete it and rebuild.
+- **Architecture warning persisting:** the PC project now also carries
+  `x64` groups for Visual Studio's `Any CPU` (with a space) platform name.
+  If MSB3270 still shows, do a Clean + Rebuild (an up-to-date MSIL DLL in
+  `bin/` can make the warning look current) and check Configuration Manager
+  has no per-project platform override.

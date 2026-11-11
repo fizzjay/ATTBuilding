@@ -72,10 +72,25 @@ def test_reported_build_errors_stay_fixed():
     for proj, ns in (("pchost", "ATTBuilding"), ("quest", "ATTBuildingQuest")):
         info = read(f"{proj}/Properties/AssemblyInfo.cs")
         assert not any(l.strip() == "using MelonLoader;" for l in info.splitlines())
-        assert f"typeof({ns}.Main)" in info and "MelonLoader.MelonInfo" in info
+        assert f"typeof({ns}.ATTBuildingMod)" in info and "MelonLoader.MelonInfo" in info
     # MSB3270: MelonLoader.dll is AMD64, so both projects target x64.
     for proj in ("pchost/ATTBuilding.csproj", "quest/ATTBuilding.csproj"):
         assert "<PlatformTarget>x64</PlatformTarget>" in read(proj), proj
+    # CS0117/CS1061 from IL2CPP-only surface leaking into the Mono build:
+    # WasCollected, and RuntimeConsole's outputBuffer/outputField/logFilter/
+    # CopyBufferToOutput (private fields on Mono) must never be named directly.
+    for f in (ROOT / "pchost").glob("*.cs"):
+        assert ".WasCollected" not in f.read_text(encoding="utf-8"), f
+    for proj in ("pchost", "quest"):
+        hook = read(f"{proj}/ConsoleHook.cs")
+        for bad in ("_console.outputBuffer", "_console.outputField", "_console.CopyBufferToOutput()", "rc.logFilter"):
+            assert bad not in hook, (proj, bad)
+        assert 'GetMember(_console, "outputBuffer")' in hook and 'SetMember(rc, "logFilter", 0)' in hook
+    # CS0104 cannot come back: the entry class is not called Main anywhere.
+    assert "class ATTBuildingMod : MelonMod" in read("pchost/Main.cs")
+    assert "class ATTBuildingMod : MelonMod" in read("quest/Main.cs")
+    assert "ATTBuilding.ATTBuildingMod" in read("pchost/Properties/AssemblyInfo.cs")
+    assert "Debug|Any CPU" in read("pchost/ATTBuilding.csproj")  # VS platform spelling covered
     # CS0246: never name the game's InputField type (its namespace differs
     # between Mono and IL2CPP); the console prefix takes it as object.
     for proj in ("pchost", "quest"):

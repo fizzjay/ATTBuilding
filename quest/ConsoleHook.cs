@@ -118,13 +118,58 @@ namespace ATTBuildingQuest
             try
             {
                 if (_console == null || _console.WasCollected) return;
-                var buffer = _console.outputBuffer;
-                int max = _console.outputField == null ? 0 : _console.outputField.MaxLines;
-                while (max > 0 && buffer.Count >= max) buffer.Dequeue();
-                buffer.Enqueue(line);
-                _console.CopyBufferToOutput();
+                // outputBuffer / outputField / CopyBufferToOutput are private
+                // fields on the Mono RuntimeConsole and interop properties on
+                // IL2CPP -- naming them directly only compiles on one build.
+                object buffer = GetMember(_console, "outputBuffer");
+                if (buffer == null) return;
+                int max = 0;
+                object outputField = GetMember(_console, "outputField");
+                if (outputField != null && GetMember(outputField, "MaxLines") is int ml) max = ml;
+                if (max > 0) while (GetMember(buffer, "Count") is int count && count >= max) Call(buffer, "Dequeue");
+                Call(buffer, "Enqueue", line);
+                Call(_console, "CopyBufferToOutput");
             }
             catch (Exception ex) { Mod.LogOnce("console print: " + ex.Message); }
+        }
+
+        private static object GetMember(object target, string name)
+        {
+            if (target == null) return null;
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+            var type = target.GetType();
+            var prop = type.GetProperty(name, flags);
+            if (prop != null) return prop.GetValue(target, null);
+            var field = type.GetField(name, flags);
+            return field == null ? null : field.GetValue(target);
+        }
+
+        private static void SetMember(object target, string name, object value)
+        {
+            if (target == null) return;
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+            var type = target.GetType();
+            var prop = type.GetProperty(name, flags);
+            if (prop != null && prop.CanWrite) { prop.SetValue(target, ConvertTo(prop.PropertyType, value), null); return; }
+            var field = type.GetField(name, flags);
+            if (field != null) field.SetValue(target, ConvertTo(field.FieldType, value));
+        }
+
+        private static object ConvertTo(System.Type type, object value)
+        {
+            if (value == null || type.IsInstanceOfType(value)) return value;
+            if (type.IsEnum) return System.Enum.ToObject(type, value);
+            return System.Convert.ChangeType(value, type);
+        }
+
+        private static void Call(object target, string name, params object[] args)
+        {
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+            foreach (var method in target.GetType().GetMethods(flags))
+            {
+                if (method.Name != name || method.GetParameters().Length != args.Length) continue;
+                method.Invoke(target, args); return;
+            }
         }
 
         // Server replies to routed spawn requests arrive asynchronously
@@ -181,7 +226,7 @@ foreach (UnityEngine.Object value in UnityEngine.Resources.FindObjectsOfTypeAll(
                 go.SetActive(true);
                 _console = go;
                 var rc = go.GetComponent<RuntimeConsole>();
-                if (rc != null) rc.logFilter = 0;
+                if (rc != null) { try { SetMember(rc, "logFilter", 0); } catch { } }
                 return "ATT Building console open (" + how + "). Type: build help";
             }
             catch (Exception ex) { return "Console summon failed: " + ex; }

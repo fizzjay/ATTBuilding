@@ -7,5 +7,5 @@ using System.Reflection;
 [assembly: AssemblyVersion("0.1.0.0")]
 [assembly: AssemblyTitle("ATTBuilding")]
 [assembly: AssemblyProduct("ATTBuilding")]
-[assembly: MelonLoader.MelonInfo(typeof(ATTBuildingQuest.Main), "ATTBuilding", "0.1.0", "ATTBuilding")]
+[assembly: MelonLoader.MelonInfo(typeof(ATTBuildingQuest.ATTBuildingMod), "ATTBuilding", "0.1.0", "ATTBuilding")]
 [assembly: MelonLoader.MelonGame("Alta", "Att_Quest")]
