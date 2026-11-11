@@ -1,0 +1,9 @@
+# Game reference assemblies are proprietary and machine-local (ArmorUpdate convention).
+/refs/quest/
+/refs/pc/
+/quest/Quest.Local.props
+/pchost/bin/
+/pchost/obj/
+/quest/bin/
+/quest/obj/
+__pycache__/

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Quest (IL2CPP) build. SDK-style net8.0, matching fizzjay/ArmorUpdate's
+     quest project. References come from YOUR Quest install's generated
+     Il2Cpp interop assemblies: copy them into ..\refs\quest (gitignored) or
+     point QuestReferenceDir at them via quest\Quest.Local.props (gitignored).
+     Never build Quest from the PC Managed DLLs, and vice versa. -->
+<Project Sdk="Microsoft.NET.Sdk" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Library</OutputType>
+    <RootNamespace>ATTBuildingQuest</RootNamespace>
+    <AssemblyName>ATTBuilding</AssemblyName>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <DefineConstants>$(DefineConstants);BUILD_QUEST</DefineConstants>
+    <QuestReferenceDir Condition="'$(QuestReferenceDir)' == ''">$(MSBuildProjectDirectory)\..\refs\quest</QuestReferenceDir>
+  </PropertyGroup>
+  <Import Project="Quest.Local.props" Condition="Exists('Quest.Local.props')" />
+  <ItemGroup>
+    <Reference Include="0Harmony"><HintPath>$(QuestReferenceDir)\0Harmony.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2CppAlta.Global.Runtime"><HintPath>$(QuestReferenceDir)\Il2CppAlta.Global.Runtime.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2CppAlta.Serialization.Runtime"><HintPath>$(QuestReferenceDir)\Il2CppAlta.Serialization.Runtime.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2CppAlta.Singletons"><HintPath>$(QuestReferenceDir)\Il2CppAlta.Singletons.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2CppAlta.Values"><HintPath>$(QuestReferenceDir)\Il2CppAlta.Values.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2CppInterop.Runtime"><HintPath>$(QuestReferenceDir)\Il2CppInterop.Runtime.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2Cppmscorlib"><HintPath>$(QuestReferenceDir)\Il2Cppmscorlib.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2CppRoot.Township"><HintPath>$(QuestReferenceDir)\Il2CppRoot.Township.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2CppSystem.Core"><HintPath>$(QuestReferenceDir)\Il2CppSystem.Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="MelonLoader"><HintPath>$(QuestReferenceDir)\MelonLoader.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(QuestReferenceDir)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.PhysicsModule"><HintPath>$(QuestReferenceDir)\UnityEngine.PhysicsModule.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\shared\BuildState.cs"><Link>BuildState.cs</Link></Compile>
+    <Compile Include="..\shared\CommandParser.cs"><Link>CommandParser.cs</Link></Compile>
+    <Compile Include="..\shared\SnapMath.cs"><Link>SnapMath.cs</Link></Compile>
+    <Compile Include="..\shared\TrackedRegistry.cs"><Link>TrackedRegistry.cs</Link></Compile>
+    <Compile Include="..\shared\VectorSnap.cs"><Link>VectorSnap.cs</Link></Compile>
+    <Compile Include="Bubble.cs" />
+    <Compile Include="BuildMode.cs" />
+    <Compile Include="ConsoleHook.cs" />
+    <Compile Include="Main.cs" />
+    <Compile Include="Spawner.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+  </ItemGroup>
+</Project>
