@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- PC (Mono) build. Legacy project style, matching fizzjay/ArmorUpdate's
+     pchost project: references resolve from the PC game's Managed folder /
+     MelonLoader (add that folder to the reference search path, or copy the
+     DLLs next to the project under ..\refs\pc -- gitignored). -->
+<Project ToolsVersion="4.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <OutputType>Library</OutputType>
+    <RootNamespace>ATTBuilding</RootNamespace>
+    <AssemblyName>ATTBuilding</AssemblyName>
+    <!-- MelonLoader.dll is AMD64: target x64 unconditionally, otherwise VS
+         builds MSIL and warns MSB3270 (MSIL vs AMD64 mismatch). -->
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <TargetFrameworkVersion>v4.0</TargetFrameworkVersion>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <PlatformTarget>x64</PlatformTarget>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <PlatformTarget>x64</PlatformTarget>
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="0Harmony" />
+    <Reference Include="Alta.Console" />
+    <Reference Include="Alta.Serialization.Runtime" />
+    <Reference Include="Alta.Singletons" />
+    <Reference Include="Alta.Values" />
+    <Reference Include="MelonLoader" />
+    <Reference Include="Root.Township" />
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="UnityEngine.CoreModule" />
+    <Reference Include="UnityEngine.PhysicsModule" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\shared\BuildState.cs"><Link>BuildState.cs</Link></Compile>
+    <Compile Include="..\shared\CommandParser.cs"><Link>CommandParser.cs</Link></Compile>
+    <Compile Include="..\shared\SnapMath.cs"><Link>SnapMath.cs</Link></Compile>
+    <Compile Include="..\shared\TrackedRegistry.cs"><Link>TrackedRegistry.cs</Link></Compile>
+    <Compile Include="..\shared\VectorSnap.cs"><Link>VectorSnap.cs</Link></Compile>
+    <Compile Include="Bubble.cs" />
+    <Compile Include="BuildMode.cs" />
+    <Compile Include="ConsoleHook.cs" />
+    <Compile Include="Main.cs" />
+    <Compile Include="ServerCommands.cs" />
+    <Compile Include="Spawner.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>
