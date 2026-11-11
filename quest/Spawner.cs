@@ -25,7 +25,7 @@ namespace ATTBuildingQuest
             if (string.IsNullOrWhiteSpace(name)) { error = "Name a prefab, e.g. build spawn wooden plank"; return null; }
             string wanted = name.Trim();
             NetworkPrefab exact = null, partial = null; int partials = 0;
-            foreach (NetworkPrefab prefab in PrefabManager.AllPrefabs)
+            foreach (NetworkPrefab prefab in NativeSnapshot.Items(PrefabManager.AllPrefabs)) // Il2Cpp collections have no C#-foreach-able enumerator; snapshot first
             {
                 if (prefab == null) continue;
                 string candidate = Clean(prefab.name);
@@ -43,7 +43,7 @@ namespace ATTBuildingQuest
         internal static void ListMatching(string filter, Action<string> print)
         {
             var names = new List<string>();
-            foreach (NetworkPrefab prefab in PrefabManager.AllPrefabs)
+            foreach (NetworkPrefab prefab in NativeSnapshot.Items(PrefabManager.AllPrefabs)) // Il2Cpp collections have no C#-foreach-able enumerator; snapshot first
             {
                 if (prefab == null) continue;
                 string n = Clean(prefab.name);
@@ -198,7 +198,7 @@ namespace ATTBuildingQuest
             {
                 var sync = CommandSync.Instance;
                 if (sync == null) return false;
-                sync.RouteCommand(command, Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<System.Action<string, string>>(new System.Action<string, string>(OnReply)));
+                sync.RouteCommand(command, Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<Il2CppSystem.Action<string, string>>(new System.Action<string, string>(OnReply)));
                 return true;
             }
             catch (Exception ex) { Mod.LogOnce("route: " + ex.Message); return false; }

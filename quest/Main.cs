@@ -22,7 +22,7 @@ namespace ATTBuildingQuest
                 var harmony = new HarmonyLib.Harmony("attbuilding");
                 Mod.Log.Msg(ConsoleHook.Apply(harmony));
                 Mod.Log.Msg(Bubble.Apply(harmony));
-SERVER_IATTBuildingQuestTALL                _running = true;
+                _running = true;
                 Mod.Log.Msg("ATTBuilding " + Mod.Version + " started (Quest IL2CPP). Open the wrist menu and pick the 'ATT Building Console' bubble, then: build help");
             }
             catch (Exception ex) { Mod.Log.Error("failed to start, staying off: " + ex); }

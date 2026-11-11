@@ -109,3 +109,19 @@ Each is isolated in one file per platform, deliberately:
   Know that MSB3270 is a *warning only* here: MelonLoader loads mod DLLs as
   managed IL into the (x64/ARM64) game process, and an AnyCPU/MSIL build
   still runs -- the x64 target just silences the mismatch properly.
+
+- **`'IEnumerator<NetworkPrefab>' does not contain a definition for
+  'MoveNext'` / foreach errors on Quest:** Il2CppSystem collections don't
+  satisfy C#'s foreach pattern (that's why ArmorUpdate ships
+  `NativeEnumerable`). Quest loops over game collections only through
+  `NativeSnapshot.Items(...)` in `quest/NativeSnapshot.cs`. The same foreach
+  is fine in `pchost/` -- do not "unify" them by copying the PC line back.
+- **`System.Action<string,string> cannot be used as type parameter
+  'TIl2Cpp' in ConvertDelegate<TIl2Cpp>`:** this Il2CppInterop version wants
+  the IL2CPP delegate type: `ConvertDelegate<Il2CppSystem.Action<string,
+  string>>(...)`. (The reference AdminConsole wrote `Action<...>` because its
+  file had `using Il2CppSystem;`.)
+- **`SERVER_IATTBuildingQuestTALL could not be found` / `_running is never
+  assigned`:** a generator placeholder token that survived into
+  `quest/Main.cs`; removed. If you ever see a `...TALL` identifier again it
+  is leftover template text, not a type to reference.

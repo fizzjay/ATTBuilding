@@ -86,6 +86,20 @@ def test_reported_build_errors_stay_fixed():
         for bad in ("_console.outputBuffer", "_console.outputField", "_console.CopyBufferToOutput()", "rc.logFilter"):
             assert bad not in hook, (proj, bad)
         assert 'GetMember(_console, "outputBuffer")' in hook and 'SetMember(rc, "logFilter", 0)' in hook
+    # Quest-only compile traps from the IL2CPP surface:
+    for bad in ("SERVER_IATTBuildingQuestTALL", "SERVER_IATTBuildingTALL"):
+        for f in (ROOT / "quest").glob("*.cs"):
+            assert bad not in f.read_text(encoding="utf-8"), f
+    assert "_running = true;" in read("quest/Main.cs")
+    # Il2CppSystem collections are not C#-foreach-able: AllPrefabs is only
+    # ever looped through the NativeSnapshot copy (ArmorUpdate pattern).
+    quest_spawner = read("quest/Spawner.cs")
+    assert "in PrefabManager.AllPrefabs)" not in quest_spawner
+    assert quest_spawner.count("NativeSnapshot.Items(PrefabManager.AllPrefabs)") == 2
+    assert "NativeSnapshot.cs" in read("quest/ATTBuilding.csproj")
+    # ConvertDelegate<T> wants the IL2CPP delegate type, not System.Action.
+    assert "ConvertDelegate<Il2CppSystem.Action<string, string>>" in quest_spawner
+    assert "ConvertDelegate<System.Action" not in quest_spawner
     # Shared types live in namespace ATTBuilding; quest code is in the
     # sibling ATTBuildingQuest, so any quest file naming one must import it
     # (the PC files share the namespace and need no using).
