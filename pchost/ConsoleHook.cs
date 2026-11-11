@@ -188,7 +188,7 @@ namespace ATTBuilding
     internal static class ConsoleOpener
     {
         private static UnityEngine.GameObject _console;
-        internal static bool IsVisible { get { return _console != null && _console.activeInHierarchy; } }  // Mono: Unity's == null already detects destroyed objects; WasCollected is IL2CPP-only
+        internal static bool IsVisible { get { return _console != null && _console.activeInHierarchy; } }  // Unity's == null already detects destroyed objects
 
         internal static string Toggle()
         {

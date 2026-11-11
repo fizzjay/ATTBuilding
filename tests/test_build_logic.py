@@ -80,7 +80,7 @@ def test_reported_build_errors_stay_fixed():
     # WasCollected, and RuntimeConsole's outputBuffer/outputField/logFilter/
     # CopyBufferToOutput (private fields on Mono) must never be named directly.
     for f in list((ROOT / "pchost").glob("*.cs")) + list((ROOT / "quest").glob("*.cs")):
-        assert ".WasCollected" not in f.read_text(encoding="utf-8"), f
+        assert "WasCollected" not in f.read_text(encoding="utf-8"), f
     for proj in ("pchost", "quest"):
         hook = read(f"{proj}/ConsoleHook.cs")
         for bad in ("_console.outputBuffer", "_console.outputField", "_console.CopyBufferToOutput()", "rc.logFilter"):
@@ -93,6 +93,7 @@ def test_reported_build_errors_stay_fixed():
         assert "internal static void SetMember" in hook
         assert "ConsoleHook.SetMember(rc" in hook
     assert "<PlatformTarget>x64</PlatformTarget>" in read("Directory.Build.props")
+    assert "ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch" in read("Directory.Build.props")
     # CS0104 cannot come back: the entry class is not called Main anywhere.
     assert "class ATTBuildingMod : MelonMod" in read("pchost/Main.cs")
     assert "class ATTBuildingMod : MelonMod" in read("quest/Main.cs")

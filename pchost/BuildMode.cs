@@ -72,7 +72,7 @@ namespace ATTBuilding
         {
             try
             {
-                if (pickup == null) return;  // Mono Unity null check; WasCollected is IL2CPP-only
+                if (pickup == null) return;  // Unity null check (destroyed objects compare == null)
                 if (BuildState.Snapping)
                 {
                     pickup.transform.rotation = VectorSnap.SnapRotation(pickup.transform.rotation, BuildState.AngleStepDegrees);
