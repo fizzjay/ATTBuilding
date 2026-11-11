@@ -86,6 +86,14 @@ def test_reported_build_errors_stay_fixed():
         for bad in ("_console.outputBuffer", "_console.outputField", "_console.CopyBufferToOutput()", "rc.logFilter"):
             assert bad not in hook, (proj, bad)
         assert 'GetMember(_console, "outputBuffer")' in hook and 'SetMember(rc, "logFilter", 0)' in hook
+    # Crash discipline (Quest hard-close ~90s in): the bubble must clone a
+    # ScriptableObject action ASSET (ArmorUpdate's EquipmentMenu), never the
+    # first scene entry of quickAccessMenus, and must reuse its one clone.
+    bubble = read("quest/Bubble.cs")
+    assert "EquipmentModeQuickAccess" in bubble and "FindTemplate" in bubble
+    assert "if (_action == null)" in bubble and "Object.Instantiate(template)" in bubble
+    assert "template = a; break" not in bubble
+    assert "Crumb.cs" in read("quest/ATTBuilding.csproj") and "Crumb.At" in bubble
     # Quest-only compile traps from the IL2CPP surface:
     for bad in ("SERVER_IATTBuildingQuestTALL", "SERVER_IATTBuildingTALL"):
         for f in (ROOT / "quest").glob("*.cs"):

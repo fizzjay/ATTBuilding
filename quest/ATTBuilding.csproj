@@ -45,6 +45,7 @@
     <Compile Include="ConsoleHook.cs" />
     <Compile Include="Main.cs" />
     <Compile Include="NativeSnapshot.cs" />
+    <Compile Include="Crumb.cs" />
     <Compile Include="Spawner.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>

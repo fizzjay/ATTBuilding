@@ -80,18 +80,60 @@ namespace ATTBuildingQuest
             var menus = Menus(menu);
             if (menus == null) return;
             foreach (var a in menus) if (a != null && a.GetInstanceID() == _ourActionId) { _menu = menu; return; }
-            QuickAccessMenuAction template = null;
-            foreach (var a in menus) if (a != null) { template = a; break; }
-            if (template == null) return;
-            var clone = Object.Instantiate(template);
-            clone.name = "ATT Building Console";
-            clone.InitializeForPlayer(local.NetworkPlayer, false);
+
+            // Reuse the one clone if the controller rebuilt its menu list;
+            // never Instantiate per rebuild.
+            if (_action == null)
+            {
+                // Clone ONLY a ScriptableObject action asset (ArmorUpdate's
+                // EquipmentMenu does exactly this with the native
+                // EquipmentModeQuickAccess). The previous version cloned the
+                // first entry of quickAccessMenus: if that entry is a scene
+                // Component, Object.Instantiate clones its entire GameObject
+                // (the wrist-menu rig), every menu rebuild -- native-crash
+                // territory. If no asset template is loaded, add nothing.
+                QuickAccessMenuAction template = FindTemplate();
+                if (template == null)
+                {
+                    if (!_warned) { Mod.Log.Warning("bubble: no cloneable quick-access action asset loaded yet; bubble not added."); _warned = true; }
+                    return;
+                }
+                Crumb.At("bubble: instantiate template " + template.name);
+                _action = Object.Instantiate(template);
+                _action.name = "ATT Building Console";
+                _ourActionId = _action.GetInstanceID();
+                Crumb.At("bubble: cloned " + _ourActionId);
+            }
+            Crumb.At("bubble: InitializeForPlayer");
+            _action.InitializeForPlayer(local.NetworkPlayer, false);
             var updated = new Il2CppReferenceArray<QuickAccessMenuAction>(menus.Length + 1);
             for (int i = 0; i < menus.Length; i++) updated[i] = menus[i];
-            updated[menus.Length] = clone;
+            updated[menus.Length] = _action;
+            Crumb.At("bubble: append to quickAccessMenus");
             SetMenus(menu, updated);
-            _menu = menu; _action = clone; _ourActionId = clone.GetInstanceID();
+            _menu = menu;
+            Crumb.At("bubble: added");
             Mod.Log.Msg("bubble: 'ATT Building Console' added to the wrist menu; reopen it and pick Building.");
+        }
+
+        private static QuickAccessMenuAction FindTemplate()
+        {
+            // Preferred: the native Equipment Mode action asset (proven
+            // cloneable by ArmorUpdate's EquipmentMenu).
+            foreach (Object value in Resources.FindObjectsOfTypeAll(Il2CppType.Of<EquipmentModeQuickAccess>()))
+            {
+                var native = value == null ? null : value.TryCast<EquipmentModeQuickAccess>();
+                if (native != null) return native.TryCast<QuickAccessMenuAction>();
+            }
+            // Fallback: any loaded action asset that is NOT a scene Component.
+            foreach (Object value in Resources.FindObjectsOfTypeAll(Il2CppType.Of<QuickAccessMenuAction>()))
+            {
+                var action = value == null ? null : value.TryCast<QuickAccessMenuAction>();
+                if (action == null) continue;
+                try { if (action.TryCast<Component>() != null) continue; } catch { continue; }
+                return action;
+            }
+            return null;
         }
 
         private const BindingFlags Members = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;

@@ -125,3 +125,16 @@ Each is isolated in one file per platform, deliberately:
   assigned`:** a generator placeholder token that survived into
   `quest/Main.cs`; removed. If you ever see a `...TALL` identifier again it
   is leftover template text, not a type to reference.
+
+## If the game hard-closes (no error in the Melon log)
+
+A native crash leaves no managed exception -- the log just stops. The Quest
+build writes its last step to `UserData/ATTBuilding/crumb.txt` before each
+bubble/console milestone. Reproduce, then read that file: whatever it names
+is where it died. Fixed in 0.1.1: the bubble previously cloned the *first
+entry* of `quickAccessMenus`; if that entry is a scene component,
+`Object.Instantiate` clones its whole GameObject (the wrist-menu rig) on
+every menu rebuild. It now clones only a ScriptableObject action asset
+(the native Equipment Mode action, as ArmorUpdate does), reuses that one
+clone, and adds nothing if no asset template is loaded. The old
+`ArmorQuest.dll` in the same log uses the same safe pattern.

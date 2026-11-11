@@ -37,7 +37,7 @@ Mod.Log.Msg("server: Alta.Console module 'build' (build spawn <player> <hash>) a
 
     internal static class Mod
     {
-        internal const string Version = "0.1.0";
+        internal const string Version = "0.1.1";
         internal static MelonLogger.Instance Log;
         internal static string DataDir;
         private static string _onceKey;

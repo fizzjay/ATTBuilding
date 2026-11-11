@@ -203,6 +203,7 @@ namespace ATTBuildingQuest
         {
             try
             {
+                Crumb.At("console: summon");
                 var player = PlayerController.Current;
                 var head = player == null ? null : player.Head;
                 if (head == null) return "Console: player not spawned yet.";
@@ -228,6 +229,7 @@ foreach (UnityEngine.Object value in UnityEngine.Resources.FindObjectsOfTypeAll(
                 _console = go;
                 var rc = go.GetComponent<RuntimeConsole>();
                 if (rc != null) { try { ConsoleHook.SetMember(rc, "logFilter", 0); } catch { } }
+                Crumb.At("console: summoned");
                 return "ATT Building console open (" + how + "). Type: build help";
             }
             catch (Exception ex) { return "Console summon failed: " + ex; }

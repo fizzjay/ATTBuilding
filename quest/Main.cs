@@ -18,6 +18,7 @@ namespace ATTBuildingQuest
             {
                 Mod.DataDir = Path.Combine(MelonEnvironment.UserDataDirectory, "ATTBuilding");
                 Directory.CreateDirectory(Mod.DataDir);
+                Crumb.Init(Mod.DataDir);
                 Settings.Load();
                 var harmony = new HarmonyLib.Harmony("attbuilding");
                 Mod.Log.Msg(ConsoleHook.Apply(harmony));
@@ -38,7 +39,7 @@ namespace ATTBuildingQuest
 
     internal static class Mod
     {
-        internal const string Version = "0.1.0";
+        internal const string Version = "0.1.1";
         internal static MelonLogger.Instance Log;
         internal static string DataDir;
         private static string _onceKey;

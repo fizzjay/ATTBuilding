@@ -14,6 +14,7 @@ namespace ATTBuilding
     internal static class Bubble
     {
         private static int _ourActionId;
+        private static object _clone;
         private static float _nextScan;
         private static bool _installed, _warned;
         private static Type _menuType, _actionType;
@@ -77,19 +78,34 @@ namespace ATTBuilding
             if (menus == null || menus.Length == 0) return;
             foreach (var a in menus)
             { var o = a as UnityEngine.Object; if (o != null && o.GetInstanceID() == _ourActionId) return; }
+            // Reuse the one clone if the controller rebuilt its menu list.
+            if (_clone != null)
+            {
+                var existing = _clone as UnityEngine.Object;
+                SetMember(existing, "DisplayName", "Building");
+                AppendTo(menu, menus, existing);
+                return;
+            }
             var template = menus.GetValue(0) as UnityEngine.Object;
             if (template == null) return;
             var clone = UnityEngine.Object.Instantiate(template);
+            _clone = clone;
             clone.name = "ATT Building Console";
             try { SetMember(clone, "DisplayName", "Building"); } catch { }
             var init = clone.GetType().GetMethod("InitializeForPlayer", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
             if (init != null) init.Invoke(clone, new object[] { local.NetworkPlayer, false });
-            var updated = Array.CreateInstance(_actionType, menus.Length + 1);
-            for (int i = 0; i < menus.Length; i++) updated.SetValue(menus.GetValue(i), i);
-            updated.SetValue(clone, menus.Length);
-            SetMember(menu, "quickAccessMenus", updated);
+            AppendTo(menu, menus, clone);
             _ourActionId = clone.GetInstanceID();
             Mod.Log.Msg("bubble: 'ATT Building Console' added to the wrist menu; reopen it and pick Building.");
+        }
+
+
+        private static void AppendTo(Component menu, Array menus, UnityEngine.Object action)
+        {
+            var updated = Array.CreateInstance(_actionType, menus.Length + 1);
+            for (int i = 0; i < menus.Length; i++) updated.SetValue(menus.GetValue(i), i);
+            updated.SetValue(action, menus.Length);
+            SetMember(menu, "quickAccessMenus", updated);
         }
 
         private static object GetMember(object target, string name)
