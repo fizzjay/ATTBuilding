@@ -365,3 +365,22 @@ of our fixup. 0.4.9 instruments it instead of guessing:
 - The `grabbable ...` log line now also dumps `entityLinked`,
   `rigidbodyField`, `collidersSet`, `networkRigidbody` and `enabled`
   so one field log answers most follow-up questions.
+
+## 0.4.10 crash fix: never Harmony-patch Pickup methods
+
+0.4.9 crashed Quest ~5 s after launch:
+`InvalidProgramException: Invalid IL code in DMD<>... AssessScore
+(intptr,intptr,single&,Il2CppMethodInfo*)`. The diagnostic postfixes
+patched `Pickup.AssessScore`, which takes a `ref float` parameter;
+Harmony's IL2CPP wrapper for ref-parameter methods emits invalid IL
+and detonates on the method's first call. All three Pickup patches
+(`AssessScore`, `CheckInteractAllowedAndReplace`, `Interact`) are
+removed. Grab diagnostics are now polling-only: `BuildMode.Tick`
+watches each tracked pickup's `Interactors.Count`, `IsDocked`,
+rigidbody kinematic flag, entity link and nearest-local-hand distance,
+logging `grabdiag:` lines on every state transition. Interpretation:
+hand distance dropping under ~0.3 with zero interactors/docked change
+means the hand's candidate scan never selects the object; an
+interactors flip with no hold means `Interact` itself refuses. The
+0.4.9 runtime-Pickup fixes (`Initialize()`, filling `Colliders`) are
+unchanged.

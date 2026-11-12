@@ -1,6 +1,5 @@
 
 using System;
-using HarmonyLib;
 using Alta.Networking;
 using Alta.Networking.Scripts.Player;
 using ATT.Character.QuickAccessMenu;
@@ -168,6 +167,7 @@ namespace ATTBuilding
                 Place(_held); // just released
                 _held = null; _heldId = 0; BuildState.HeldInstanceId = 0;
             }
+            PollGrabDiag();
         }
 
         private static void Place(Pickup pickup)
@@ -188,24 +188,59 @@ namespace ATTBuilding
         }
 
 
-        private static readonly System.Collections.Generic.Dictionary<string, float> _diagSeen = new System.Collections.Generic.Dictionary<string, float>();
+        // ---- grab diagnostics (POLLING ONLY -- do not Harmony-patch Pickup)
+        // 0.4.9 added Harmony postfixes on Pickup.AssessScore /
+        // CheckInteractAllowedAndReplace / Interact and CRASHED Quest ~5 s
+        // after launch: AssessScore takes a `ref float` parameter and
+        // Harmony's IL2CPP wrapper for ref-parameter methods emits invalid
+        // IL (InvalidProgramException inside the DMD il2cpp->managed thunk).
+        // So instead of patching anything, watch the observable state of
+        // tracked pickups and log every transition + hand proximity. If a
+        // grab attempt never changes interactors/docked while handDist
+        // drops under ~0.3, the hand's candidate scan never selects the
+        // object; if interactors flips but nothing holds, Interact refuses.
+        private static readonly System.Collections.Generic.Dictionary<int, string> _diagState = new System.Collections.Generic.Dictionary<int, string>();
+        private static float _diagNext;
 
-        internal static void NoteGrabCheck(Pickup pickup, string what, bool result)
+        private static void PollGrabDiag()
         {
             try
             {
-                if (pickup == null) return;
-                int id = pickup.gameObject.GetInstanceID();
-                if (!TrackedRegistry.Contains(id) && !TrackedRegistry.Contains(pickup.transform.root.gameObject.GetInstanceID())) return;
-                string key = what + ":" + id;
-                float now = UnityEngine.Time.time;
-                float last;
-                if (_diagSeen.TryGetValue(key, out last) && now - last < 1.5f) return;
-                _diagSeen[key] = now;
-                Diag.Log("grabdiag: " + what + " on '" + pickup.gameObject.name + "' -> " + result
-                    + " (interactors=" + pickup.Interactors.Count + ", docked=" + pickup.IsDocked + ", rb=" + (pickup.Rigidbody != null) + ")");
+                float now = Time.time;
+                if (now < _diagNext) return;
+                _diagNext = now + 0.5f;
+                var player = PlayerController.Current;
+                foreach (int id in TrackedRegistry.Snapshot())
+                {
+                    var go = Spawner.FindByInstanceId(id);
+                    if (go == null) continue;
+                    var pickup = go.GetComponentInChildren<Pickup>();
+                    if (pickup == null) continue;
+                    float nearest = -1f;
+                    if (player != null)
+                    {
+                        foreach (var hand in player.GetComponentsInChildren<Interactor>())
+                        {
+                            if (hand == null || !hand.IsLocal) continue;
+                            float d = Vector3.Distance(hand.transform.position, pickup.transform.position);
+                            if (nearest < 0f || d < nearest) nearest = d;
+                        }
+                    }
+                    var body = pickup.Rigidbody;
+                    string state = "interactors=" + pickup.Interactors.Count
+                        + " docked=" + pickup.IsDocked
+                        + " kinematic=" + (body != null && body.isKinematic)
+                        + " entity=" + (pickup.Entity != null)
+                        + " handDist=" + (nearest < 0f ? "n/a" : (Mathf.Round(nearest * 4f) / 4f).ToString("0.00"));
+                    string prev;
+                    if (!_diagState.TryGetValue(id, out prev) || prev != state)
+                    {
+                        _diagState[id] = state;
+                        Diag.Log("grabdiag: '" + go.name + "' " + state);
+                    }
+                }
             }
-            catch { }
+            catch (Exception ex) { Mod.LogOnce("grabdiag poll: " + ex.Message); }
         }
 
         // The ShardClient Readout pattern: scan the local player's hands.
@@ -224,26 +259,5 @@ namespace ATTBuilding
             }
             return null;
         }
-    }
-
-    [HarmonyPatch(typeof(Pickup), "AssessScore")]
-    internal static class GrabDiagAssess
-    {
-        [HarmonyPostfix]
-        private static void Postfix(Pickup __instance, bool __result) { BuildMode.NoteGrabCheck(__instance, "AssessScore", __result); }
-    }
-
-    [HarmonyPatch(typeof(Pickup), "CheckInteractAllowedAndReplace")]
-    internal static class GrabDiagAllowed
-    {
-        [HarmonyPostfix]
-        private static void Postfix(Pickup __instance, bool __result) { BuildMode.NoteGrabCheck(__instance, "CheckInteractAllowed", __result); }
-    }
-
-    [HarmonyPatch(typeof(Pickup), "Interact", new System.Type[] { typeof(Interactor) })]
-    internal static class GrabDiagInteract
-    {
-        [HarmonyPostfix]
-        private static void Postfix(Pickup __instance) { BuildMode.NoteGrabCheck(__instance, "Interact()", true); }
     }
 }

@@ -276,19 +276,24 @@ def test_reported_build_errors_stay_fixed():
 def test_grab_pipeline_instrumented():
     for f in ("quest/BuildMode.cs", "pchost/BuildMode.cs"):
         s = read(f)
-        # log-only diagnostics on the game's own grab pipeline
-        assert '[HarmonyPatch(typeof(Pickup), "AssessScore")]' in s, f
-        assert '[HarmonyPatch(typeof(Pickup), "CheckInteractAllowedAndReplace")]' in s, f
+        # CRASH REGRESSION (0.4.9 -> 0.4.10): Harmony-patching
+        # Pickup.AssessScore killed Quest ~5 s after launch -- the method
+        # takes a ref float and Harmony's IL2CPP wrapper emits invalid IL
+        # (InvalidProgramException in the DMD thunk). NEVER patch Pickup
+        # methods again; diagnostics are polling-only.
+        assert "HarmonyPatch(typeof(Pickup)" not in s, f
+        assert "NoteGrabCheck" not in s, f
+        # polling diagnostics: state transitions + hand proximity, tracked only
+        assert "PollGrabDiag" in s, f
         assert "grabdiag:" in s, f
-        # only tracked (console-spawned) objects are logged
-        assert "TrackedRegistry.Contains(id)" in s, f
+        assert "TrackedRegistry.Snapshot()" in s, f
         # runtime-added Pickup must be Initialized into its entity ...
         assert "pickup.Initialize()" in s, f
         # ... and Pickup.Colliders (populated by Awake, which ran too early)
         assert 'Call(pickup.Colliders, "Add", c)' in s, f
         assert "entityLinked=" in s, f
     for f in ("quest/Main.cs", "pchost/Main.cs"):
-        assert 'Version = "0.4.9"' in read(f), f
+        assert 'Version = "0.4.10"' in read(f), f
 
 
 if __name__ == "__main__":
