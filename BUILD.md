@@ -180,3 +180,27 @@ dump and state changes in there name the exact member/method involved.
   (best-effort, logged in `debug.log`).
 - **Spawns a tad up:** head height +0.12 m at 1 m out, instead of 0.25 m
   below the head.
+
+## 0.4.0 (second round of live testing)
+
+- **Server spawn actually registered:** `[Module]` classes are not
+  auto-discovered -- ArmorRestored calls
+  `CommandService.CommandCollection.Collect(assembly)` from a
+  `NetworkScene.FirstInitialize` server seam. We never did, so routed
+  client spawns hit an unknown server command and only ever timed out.
+  The PC build now registers identically (`pchost/ServerSeam.cs`); the
+  server log prints `console commands registered: build`, and its
+  `debug.log` logs every routed request. (The server must run the **PC**
+  build, updated to 0.4.0+, for this to exist.)
+- **Console no longer opens with the menu:** `Open` on a quick-access
+  action is the menu-open lifecycle (called on the remembered action each
+  time the wheel opens), not "user picked this". Our clone's `Open` is now
+  suppress-only (no dummy, no console); `Run` -- the actual pick -- is the
+  toggle, and polled activation stands down when `Run` is patched.
+- **Movable console, take 2:** a runtime-added `Pickup` has empty
+  editor-injected fields (`rigidbody`, `childrenColliders`), and the empty
+  rigidbody field makes `Pickup.CheckInteractAllowedAndReplace` refuse
+  every grab. Both are now filled by reflection, with log lines at each step.
+- **Keyboard reset after each command:** the instant refocus raced the
+  keyboard closing; it's now a delayed (0.35 s) panel off/on cycle plus
+  input activation, processed from the per-frame tick.

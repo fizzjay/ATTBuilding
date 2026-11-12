@@ -32,11 +32,12 @@ namespace ATTBuilding
                 {
                     var concrete = AccessTools.TypeByName("EquipmentModeQuickAccess");
                     if (concrete != null)
-                        foreach (string verb in new[] { "Open", "Run" })
-                        {
-                            var m = AccessTools.Method(concrete, verb);
-                            if (m != null) harmony.Patch(m, prefix: new HarmonyMethod(typeof(Bubble), nameof(EquipmentPrefix)));
-                        }
+                    {
+                        var open = AccessTools.Method(concrete, "Open");
+                        if (open != null) harmony.Patch(open, prefix: new HarmonyMethod(typeof(Bubble), nameof(EquipmentOpenSuppress)));
+                        var run = AccessTools.Method(concrete, "Run");
+                        if (run != null) { harmony.Patch(run, prefix: new HarmonyMethod(typeof(Bubble), nameof(EquipmentPrefix))); _runPatched = true; }
+                    }
                 }
                 _installed = true;
                 return "bubble: quick-access 'ATT Building Console' hook ready (reopen the wrist menu after joining).";
@@ -44,11 +45,21 @@ namespace ATTBuilding
             catch (Exception ex) { return "bubble: hook failed: " + ex.Message; }
         }
 
+        private static bool _runPatched;
+
+        private static bool EquipmentOpenSuppress(object __instance)
+        {
+            var obj = __instance as UnityEngine.Object;
+            if (obj == null || _ourActionId == 0 || obj.GetInstanceID() != _ourActionId) return true;
+            Diag.FileOnly("bubble: our clone Open() suppressed (menu-open lifecycle; no dummy, no console).");
+            return false;
+        }
+
         private static bool EquipmentPrefix(object __instance)
         {
             var obj = __instance as UnityEngine.Object;
             if (obj == null || _ourActionId == 0 || obj.GetInstanceID() != _ourActionId) return true;
-            Diag.Log("bubble: our clone selected -- opening console, native equipment dummy suppressed.");
+            Diag.Log("bubble: our clone Run() -- toggling console, native equipment dummy suppressed.");
             string msg = ConsoleOpener.Toggle();
             if (msg != null) Mod.Log.Msg(msg);
             return false;
@@ -71,6 +82,7 @@ namespace ATTBuilding
 
         private static void PollActivation()
         {
+            if (_runPatched) return; // Run() patch is the activation path
             var action = _clone as UnityEngine.Object;
             if (action == null || Time.unscaledTime < _nextPoll) return;
             _nextPoll = Time.unscaledTime + 0.15f;

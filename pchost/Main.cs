@@ -24,7 +24,7 @@ namespace ATTBuilding
                 if (Mod.ConsoleEnabled) Mod.Log.Msg(ConsoleHook.Apply(harmony)); else Mod.Log.Msg("console: OFF (pref) -- hooks skipped.");
                 if (Mod.BubbleEnabled) Mod.Log.Msg(Bubble.Apply(harmony)); else Mod.Log.Msg("bubble: OFF (pref) -- quick-access bubble skipped. Set BubbleEnabled on and restart to bisect a crash.");
 
-Mod.Log.Msg("server: Alta.Console module 'build' (build spawn <player> <hash>) available to clients.");                _running = true;
+try { ServerCommands.Register(); } catch { } // no-ops unless this instance can serve; ServerSeam covers the real server init                _running = true;
                 Mod.Log.Msg("ATTBuilding " + Mod.Version + " started (PC Mono). Open the wrist menu and pick the 'ATT Building Console' bubble, then: build help");
             }
             catch (Exception ex) { Mod.Log.Error("failed to start, staying off: " + ex); }
@@ -46,7 +46,7 @@ Mod.Log.Msg("server: Alta.Console module 'build' (build spawn <player> <hash>) a
 
     internal static class Mod
     {
-        internal const string Version = "0.3.0";
+        internal const string Version = "0.4.0";
         internal static bool BubbleEnabled = true;
         internal static bool ConsoleEnabled = true;
         internal static bool SuppressDummy = true;

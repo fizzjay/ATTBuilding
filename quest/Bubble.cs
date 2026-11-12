@@ -37,12 +37,16 @@ namespace ATTBuildingQuest
                     // Concrete type only (NOT the QuickAccessMenuAction base
                     // class that crashed on menu-open when patched): divert
                     // our clone so its native equipment dummy never spawns.
-                    foreach (string verb in new[] { "Open", "Run" })
-                    {
-                        var m = AccessTools.Method(typeof(EquipmentModeQuickAccess), verb);
-                        if (m != null) { harmony.Patch(m, prefix: new HarmonyMethod(typeof(Bubble), nameof(EquipmentPrefix))); Diag.FileOnly("bubble: suppress-dummy patch on EquipmentModeQuickAccess." + verb); }
-                        else Diag.FileOnly("bubble: EquipmentModeQuickAccess." + verb + " not found; polled fallback remains.");
-                    }
+                    // Open is the MENU-OPEN lifecycle (the controller calls
+                    // it on the remembered action every time the wheel
+                    // opens) -- suppress our clone's Open so no dummy and
+                    // NO console. Run is the actual "user picked this
+                    // bubble" verb -- that one toggles the console.
+                    var open = AccessTools.Method(typeof(EquipmentModeQuickAccess), "Open");
+                    if (open != null) { harmony.Patch(open, prefix: new HarmonyMethod(typeof(Bubble), nameof(EquipmentOpenSuppress))); Diag.FileOnly("bubble: suppress patch on EquipmentModeQuickAccess.Open"); }
+                    var run = AccessTools.Method(typeof(EquipmentModeQuickAccess), "Run");
+                    if (run != null) { harmony.Patch(run, prefix: new HarmonyMethod(typeof(Bubble), nameof(EquipmentPrefix))); _runPatched = true; Diag.FileOnly("bubble: toggle patch on EquipmentModeQuickAccess.Run"); }
+                    else Diag.FileOnly("bubble: EquipmentModeQuickAccess.Run not found; polled activation remains.");
                 }
                 _installed = true;
                 DumpActionApi();
@@ -103,6 +107,7 @@ namespace ATTBuildingQuest
 
         private static void PollActivation()
         {
+            if (_runPatched) return; // Run() patch is the activation path; polling would double-toggle
             if (_action == null || UnityEngine.Time.unscaledTime < _nextPoll) return;
             _nextPoll = UnityEngine.Time.unscaledTime + 0.15f;
             if (_boolMembers == null) { _boolMembers = BoolMembers(typeof(QuickAccessMenuAction)); Snapshot("initial"); return; }
@@ -145,10 +150,19 @@ namespace ATTBuildingQuest
             catch (Exception ex) { Diag.FileOnly("bubble: Close() failed: " + ex.Message); }
         }
 
+        private static bool _runPatched;
+
+        private static bool EquipmentOpenSuppress(EquipmentModeQuickAccess __instance)
+        {
+            if (__instance == null || _ourActionId == 0 || __instance.GetInstanceID() != _ourActionId) return true; // not ours: native behaviour (your real equipment dummy) untouched
+            Diag.FileOnly("bubble: our clone Open() suppressed (menu-open lifecycle; no dummy, no console).");
+            return false;
+        }
+
         private static bool EquipmentPrefix(EquipmentModeQuickAccess __instance)
         {
             if (__instance == null || _ourActionId == 0 || __instance.GetInstanceID() != _ourActionId) return true; // not ours: native behaviour (your real equipment dummy) untouched
-            Diag.Log("bubble: our clone selected -- opening console, native equipment dummy suppressed.");
+            Diag.Log("bubble: our clone Run() -- toggling console, native equipment dummy suppressed.");
             string msg = ConsoleOpener.Toggle();
             if (msg != null) Mod.Log.Msg(msg);
             return false; // skip the native Open/Run that spawns the dummy

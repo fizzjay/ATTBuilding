@@ -198,11 +198,16 @@ namespace ATTBuildingQuest
             {
                 var sync = CommandSync.Instance;
                 if (sync == null) return false;
+                Diag.Log("route: sending to server: " + command);
                 sync.RouteCommand(command, Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<Il2CppSystem.Action<string, string>>(new System.Action<string, string>(OnReply)));
                 return true;
             }
             catch (Exception ex) { Mod.LogOnce("route: " + ex.Message); return false; }
         }
-        private static void OnReply(string name, string result) { ConsoleHook.NoteServerReply(result); }
+        private static void OnReply(string name, string result)
+        {
+            Diag.Log("route: server replied (" + (name ?? "?") + "): " + (string.IsNullOrEmpty(result) ? "(empty)" : result));
+            ConsoleHook.NoteServerReply(result);
+        }
     }
 }

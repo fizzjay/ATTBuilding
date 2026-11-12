@@ -63,6 +63,7 @@
     <Compile Include="Diag.cs" />
     <Compile Include="Main.cs" />
     <Compile Include="ServerCommands.cs" />
+    <Compile Include="ServerSeam.cs" />
     <Compile Include="Spawner.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>

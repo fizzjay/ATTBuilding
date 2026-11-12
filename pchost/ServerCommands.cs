@@ -17,9 +17,32 @@ namespace ATTBuilding
     [Module("build", "ATTBuilding: spawn and place prefabs for building")]
     public static class ServerCommands
     {
+        // [Module] classes are NOT auto-discovered. ArmorRestored calls
+        // CommandService.CommandCollection.Collect(assembly) once the server
+        // scene initialises (its ServerSeam); without this, clients route
+        // "build spawn ..." into the void and only ever see the timeout.
+        private static bool _registered;
+        internal static void Register()
+        {
+            if (_registered) return;
+            _registered = true;
+            try
+            {
+                CommandService.CommandCollection.Collect(typeof(ServerCommands).Assembly);
+                Mod.Log.Msg("console commands registered: build (clients can now 'build spawn' through this server).");
+                Diag.Log("server: 'build' console module registered.");
+            }
+            catch (Exception ex)
+            {
+                _registered = false;
+                Mod.Log.Error("console command registration failed: " + ex.Message);
+            }
+        }
+
         [Command("spawn", "Spawn a prefab in front of a player: build spawn <player> <prefabHash>")]
         public static string Spawn(string player, string prefabHash)
         {
+            Diag.Log("server: build spawn request for '" + player + "' hash " + prefabHash);
             uint hash;
             if (!uint.TryParse(prefabHash, out hash)) return "bad prefab hash '" + prefabHash + "'";
             var prefab = PrefabManager.GetPrefab(hash);

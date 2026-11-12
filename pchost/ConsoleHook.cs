@@ -48,6 +48,7 @@ namespace ATTBuilding
             catch (Exception ex) { Print("Error: " + ex.Message); Mod.LogOnce("build command: " + ex); }
             try { ClearInput(field); } catch { }
             try { RefocusInput(field); } catch (Exception ex) { Diag.FileOnly("refocus: " + ex.Message); }
+            _refocusAt = UnityEngine.Time.unscaledTime + 0.35f; // processed in TickTimeout
             // If submitting dismissed the panel itself, respawn it straight
             // away (a tad up, in front) so the keyboard comes back with it.
             try { if (!ConsoleOpener.IsVisible) Diag.FileOnly("console: respawned after command: " + ConsoleOpener.Summon()); } catch { }
@@ -210,20 +211,61 @@ namespace ATTBuilding
         // debug.log says so and the console simply stays put.
         internal static void EnsureMovable(UnityEngine.GameObject go)
         {
+            // A runtime-added Pickup starts with its [GetComponent]-injected
+            // fields EMPTY (that injection happens in the editor): no
+            // rigidbody field -> CheckInteractAllowed refuses every grab,
+            // and no childrenColliders. Fill them by reflection after adding.
             try
             {
-                if (go.GetComponentInChildren<Pickup>() != null) return;
+                var existing = go.GetComponent<Pickup>();
+                if (existing != null) { Diag.Log("console: console already has a Pickup; fixing its fields."); FixupPickup(go, existing); return; }
+                var child = go.GetComponentInChildren<Pickup>();
+                if (child != null) Diag.Log("console: note: child Pickup found on '" + child.gameObject.name + "'; adding a root one for the panel.");
                 var body = go.GetComponent<UnityEngine.Rigidbody>();
                 if (body == null) body = go.AddComponent<UnityEngine.Rigidbody>();
-                if (body != null) { body.useGravity = false; }
+                if (body != null) body.useGravity = false;
+                Diag.FileOnly("console movable: rigidbody " + (body == null ? "MISSING" : "ok"));
                 go.AddComponent<Pickup>();
-                Diag.Log("console: made grabbable (added Pickup) -- grab it to move it.");
+                var pickup = go.GetComponent<Pickup>();
+                if (pickup == null) { Diag.Log("console: Pickup did NOT stick on the console (see debug.log)."); return; }
+                FixupPickup(go, pickup);
+                Diag.Log("console: made grabbable -- grab the panel to move it.");
             }
-            catch (Exception ex) { Diag.FileOnly("console movable: " + ex); }
+            catch (Exception ex) { Diag.Log("console movable FAILED: " + ex.Message); Diag.FileOnly("console movable: " + ex); }
+        }
+
+        private static void FixupPickup(UnityEngine.GameObject go, Pickup pickup)
+        {
+            try { var body = go.GetComponent<UnityEngine.Rigidbody>(); if (body != null) SetMember(pickup, "rigidbody", body); } catch (Exception ex) { Diag.FileOnly("fixup rigidbody: " + ex.Message); }
+            try { SetMember(pickup, "childrenColliders", go.GetComponentsInChildren<UnityEngine.Collider>()); } catch (Exception ex) { Diag.FileOnly("fixup colliders: " + ex.Message); }
+            Diag.FileOnly("console movable: field fix-ups applied (rigidbody, childrenColliders).");
+        }
+
+        private static float _refocusAt = -1f;
+
+        private static void ProcessRefocus()
+        {
+            if (_refocusAt < 0f || UnityEngine.Time.unscaledTime < _refocusAt) return;
+            _refocusAt = -1f;
+            try
+            {
+                if (!ConsoleOpener.IsVisible)
+                {
+                    Diag.Log("console: respawned after command: " + ConsoleOpener.Summon());
+                    return;
+                }
+                // off/on cycle so the input field re-activates fresh
+                var go = ConsoleOpener.ConsoleObject;
+                if (go != null) { go.SetActive(false); go.SetActive(true); }
+                RefocusInput(null);
+                Diag.Log("console: refocused after command (keyboard should be back).");
+            }
+            catch (Exception ex) { Diag.FileOnly("refocus cycle: " + ex); }
         }
 
         internal static void TickTimeout()
         {
+            ProcessRefocus();
             if (_waitingUntil < 0f || UnityEngine.Time.time < _waitingUntil) return;
             _waitingUntil = -1f;
             if (_print != null) _print("No answer from the server. It may not run ATTBuilding, or you may lack spawn permission there.");
@@ -237,6 +279,7 @@ namespace ATTBuilding
     internal static class ConsoleOpener
     {
         private static UnityEngine.GameObject _console;
+        internal static UnityEngine.GameObject ConsoleObject { get { return _console; } }
         internal static bool IsVisible { get { return _console != null && _console.activeInHierarchy; } }  // Unity's == null already detects destroyed objects
 
         internal static string Toggle()

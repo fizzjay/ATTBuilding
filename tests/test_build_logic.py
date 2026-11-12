@@ -86,6 +86,22 @@ def test_reported_build_errors_stay_fixed():
         for bad in ("_console.outputBuffer", "_console.outputField", "_console.CopyBufferToOutput()", "rc.logFilter"):
             assert bad not in hook, (proj, bad)
         assert 'GetMember(_console, "outputBuffer")' in hook and 'SetMember(rc, "logFilter", 0)' in hook
+    # 0.4.0 root causes from live logs:
+    # - server spawn needs explicit module registration (ArmorRestored's
+    #   CommandService.CommandCollection.Collect in a FirstInitialize seam)
+    assert "CommandService.CommandCollection.Collect" in read("pchost/ServerCommands.cs")
+    assert "ServerSeam.cs" in read("pchost/ATTBuilding.csproj") and "FirstInitialize" in read("pchost/ServerSeam.cs")
+    # - Open is the menu-open lifecycle: suppress-only, never a toggle.
+    qb = read("quest/Bubble.cs")
+    open_seg = qb[qb.index("EquipmentOpenSuppress"):qb.index("EquipmentPrefix", qb.index("EquipmentOpenSuppress"))]
+    assert "ConsoleOpener.Toggle" not in open_seg and "_runPatched" in qb
+    assert "if (_runPatched) return;" in qb  # poll stands down when Run patched
+    # - runtime Pickup needs its editor-injected fields filled, and the
+    #   post-command refocus is a delayed off/on cycle, not an instant call.
+    for proj in ("pchost", "quest"):
+        hook = read(f"{proj}/ConsoleHook.cs")
+        assert "FixupPickup" in hook and '"childrenColliders"' in hook and '"rigidbody"' in hook
+        assert "ProcessRefocus" in hook and "_refocusAt" in hook
     # 0.3.0 user requests: dummy suppression patches ONLY the concrete
     # EquipmentModeQuickAccess (never the base class), console spawns a tad
     # up, is grabbable, and the input is refocused/respawned after commands.
