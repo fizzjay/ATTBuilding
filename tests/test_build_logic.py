@@ -94,6 +94,16 @@ def test_reported_build_errors_stay_fixed():
         assert "ValidPostfix" in bubble and '"IsValid"' in bubble
         assert "PatchDeclared" in bubble and "DeclaringType" in bubble
         assert '"displayName", "Building"' in bubble
+    # Console flight fix: it must be a locked panel, not a loose
+    # zero-gravity physics body. It only unlocks while a local hand is
+    # actually interacting with its Pickup, then freezes on release.
+    for proj in ("pchost", "quest"):
+        hook = read(f"{proj}/ConsoleHook.cs")
+        assert "TickConsoleLock" in hook and "IsConsoleGrabbed" in hook
+        assert "body.isKinematic = true" in hook and "body.isKinematic = false" in hook
+        assert "UnityEngine.RigidbodyConstraints.FreezeAll" in hook
+        assert "locked in place until grabbed again" in hook
+        assert "movement unlocked only while held" in hook
     # 0.4.0 root causes from live logs:
     # - server spawn needs explicit module registration (ArmorRestored's
     #   CommandService.CommandCollection.Collect in a FirstInitialize seam)

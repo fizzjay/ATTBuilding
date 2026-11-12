@@ -216,3 +216,14 @@ suppress-only and `Run` as the toggle, and only patches methods the
 concrete `EquipmentModeQuickAccess` itself declares (`DeclaringType`
 check, logged). The clone's serialized `displayName` field is also set to
 "Building" (the property is get-only).
+
+## 0.4.2 console stays put unless grabbed
+
+The movable console previously had a dynamic, gravity-free `Rigidbody`.
+Any touch or collision could give it velocity, and with no gravity or
+meaningful drag it simply kept flying. It is now locked as a kinematic,
+`FreezeAll` body with its position and rotation remembered. Movement is
+unlocked only while a local player's hand is actually interacting with
+the console's `Pickup`; on release both velocities are cleared and it
+locks again at the release pose. Merely touching, bumping, or clicking
+the console cannot move it.

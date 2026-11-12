@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using HarmonyLib;
+using Alta.Networking;
 using Alta.Networking.Scripts.Player;
 
 namespace ATTBuilding
@@ -218,12 +219,12 @@ namespace ATTBuilding
             try
             {
                 var existing = go.GetComponent<Pickup>();
-                if (existing != null) { Diag.Log("console: console already has a Pickup; fixing its fields."); FixupPickup(go, existing); return; }
+                if (existing != null) { Diag.Log("console: console already has a Pickup; fixing its fields and locking it in place."); FixupPickup(go, existing); return; }
                 var child = go.GetComponentInChildren<Pickup>();
                 if (child != null) Diag.Log("console: note: child Pickup found on '" + child.gameObject.name + "'; adding a root one for the panel.");
                 var body = go.GetComponent<UnityEngine.Rigidbody>();
                 if (body == null) body = go.AddComponent<UnityEngine.Rigidbody>();
-                if (body != null) body.useGravity = false;
+                if (body != null) { body.useGravity = false; body.velocity = UnityEngine.Vector3.zero; body.angularVelocity = UnityEngine.Vector3.zero; body.isKinematic = true; body.constraints = UnityEngine.RigidbodyConstraints.FreezeAll; }
                 Diag.FileOnly("console movable: rigidbody " + (body == null ? "MISSING" : "ok"));
                 go.AddComponent<Pickup>();
                 var pickup = go.GetComponent<Pickup>();
@@ -238,8 +239,119 @@ namespace ATTBuilding
         {
             try { var body = go.GetComponent<UnityEngine.Rigidbody>(); if (body != null) SetMember(pickup, "rigidbody", body); } catch (Exception ex) { Diag.FileOnly("fixup rigidbody: " + ex.Message); }
             try { SetMember(pickup, "childrenColliders", go.GetComponentsInChildren<UnityEngine.Collider>()); } catch (Exception ex) { Diag.FileOnly("fixup colliders: " + ex.Message); }
-            Diag.FileOnly("console movable: field fix-ups applied (rigidbody, childrenColliders).");
+            LockConsole(go, true);
+            Diag.FileOnly("console movable: field fix-ups applied (rigidbody, childrenColliders); locked until grabbed.");
         }
+
+        private static UnityEngine.GameObject _motionConsole;
+        private static UnityEngine.Vector3 _lockedPosition;
+        private static UnityEngine.Quaternion _lockedRotation;
+        private static bool _hasLockedPose;
+        private static bool _consoleGrabbed;
+
+        // The console is a UI panel, not a loose physics prop. Keep every
+        // Rigidbody in its hierarchy kinematic and frozen until a player's
+        // hand is genuinely interacting with its Pickup. A touch or collision
+        // therefore cannot push it, and a zero-gravity body cannot sail away.
+        // While grabbed, Pickup owns the body; the first tick after release
+        // clears both velocities and locks the panel at the release pose.
+        private static void LockConsole(UnityEngine.GameObject go, bool rememberPose)
+        {
+            if (go == null) return;
+            _motionConsole = go;
+            if (rememberPose)
+            {
+                _lockedPosition = go.transform.position;
+                _lockedRotation = go.transform.rotation;
+                _hasLockedPose = true;
+            }
+            foreach (var body in go.GetComponentsInChildren<UnityEngine.Rigidbody>())
+            {
+                if (body == null) continue;
+                if (!body.isKinematic)
+                {
+                    body.velocity = UnityEngine.Vector3.zero;
+                    body.angularVelocity = UnityEngine.Vector3.zero;
+                    body.isKinematic = true;
+                }
+                body.useGravity = false;
+                body.constraints = UnityEngine.RigidbodyConstraints.FreezeAll;
+                body.Sleep();
+            }
+        }
+
+        private static void UnlockConsole(UnityEngine.GameObject go)
+        {
+            if (go == null) return;
+            _motionConsole = go;
+            _hasLockedPose = false;
+            foreach (var body in go.GetComponentsInChildren<UnityEngine.Rigidbody>())
+            {
+                if (body == null) continue;
+                body.constraints = UnityEngine.RigidbodyConstraints.None;
+                body.useGravity = false;
+                if (body.isKinematic) body.isKinematic = false;
+                body.WakeUp();
+            }
+        }
+
+        private static bool IsConsoleGrabbed(UnityEngine.GameObject go)
+        {
+            var player = PlayerController.Current;
+            if (player == null || go == null) return false;
+            foreach (var interactor in player.GetComponentsInChildren<Interactor>())
+            {
+                if (interactor == null || !interactor.IsLocal || !interactor.IsInteracting) continue;
+                var pickup = interactor.InteractingWith == null ? null : interactor.InteractingWith as Pickup;
+                if (pickup != null && (pickup.transform == go.transform || pickup.transform.IsChildOf(go.transform))) return true;
+            }
+            return false;
+        }
+
+        private static void TickConsoleLock()
+        {
+            try
+            {
+                var go = ConsoleOpener.ConsoleObject;
+                if (go == null) { _consoleGrabbed = false; _hasLockedPose = false; _motionConsole = null; return; }
+                if (_motionConsole != go) { _consoleGrabbed = false; LockConsole(go, true); }
+                if (!go.activeInHierarchy) { _consoleGrabbed = false; LockConsole(go, false); return; }
+
+                bool grabbed = IsConsoleGrabbed(go);
+                if (grabbed)
+                {
+                    if (!_consoleGrabbed)
+                    {
+                        _consoleGrabbed = true;
+                        UnlockConsole(go);
+                        Diag.Log("console: grabbed -- movement unlocked only while held.");
+                    }
+                    return;
+                }
+
+                if (_consoleGrabbed)
+                {
+                    _consoleGrabbed = false;
+                    LockConsole(go, true);
+                    Diag.Log("console: released -- locked in place until grabbed again.");
+                    return;
+                }
+
+                bool needsLock = false;
+                foreach (var body in go.GetComponentsInChildren<UnityEngine.Rigidbody>())
+                {
+                    if (body != null && (!body.isKinematic || body.constraints != UnityEngine.RigidbodyConstraints.FreezeAll)) { needsLock = true; break; }
+                }
+                if (needsLock) LockConsole(go, false);
+                if (_hasLockedPose && _motionConsole == go)
+                {
+                    if ((go.transform.position - _lockedPosition).sqrMagnitude > 0.000001f) go.transform.position = _lockedPosition;
+                    if (UnityEngine.Quaternion.Angle(go.transform.rotation, _lockedRotation) > 0.01f) go.transform.rotation = _lockedRotation;
+                }
+            }
+            catch (Exception ex) { Diag.FileOnly("console lock: " + ex.Message); }
+        }
+
 
         private static float _refocusAt = -1f;
 
@@ -265,6 +377,7 @@ namespace ATTBuilding
 
         internal static void TickTimeout()
         {
+            TickConsoleLock();
             ProcessRefocus();
             if (_waitingUntil < 0f || UnityEngine.Time.time < _waitingUntil) return;
             _waitingUntil = -1f;
