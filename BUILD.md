@@ -341,3 +341,27 @@ direct reflection set before converting; Quest constructs the native
 array type; every fixup step (rigidbody / childrenColliders /
 grabPoints / ...) logs its own failure so the next log names the exact
 step if one still refuses.
+
+## 0.4.9 grab-pipeline diagnostics
+
+Field test of 0.4.8 proved the grab fixup now succeeds end to end
+(`surface grab point on 'Anvil(Clone)'`, `pickup ADDED, grabPoints=1`,
+no FAILED lines, remote adoption working) yet the anvil still cannot be
+grabbed — so the refusal is inside the game's grab pipeline, downstream
+of our fixup. 0.4.9 instruments it instead of guessing:
+
+- Log-only Harmony postfixes on `Pickup.AssessScore`,
+  `Pickup.CheckInteractAllowedAndReplace` and `Pickup.Interact`,
+  restricted to tracked (console-spawned) objects and rate-limited per
+  object. The next field log will contain `grabdiag:` lines naming the
+  exact check that refuses (or show that no check ever runs, meaning
+  the hand never considers the object at all).
+- Two known runtime-`AddComponent` gaps closed in `EnsureGrabbable`:
+  `Initialize()` is now called on pickups we add (a network behaviour
+  only joins its entity there; entity setup ran long before us), and
+  the `Colliders` set is filled by hand (`Pickup.Awake` copies
+  `childrenColliders` into it, but Awake ran at `AddComponent`, before
+  the reflection fixup filled that field).
+- The `grabbable ...` log line now also dumps `entityLinked`,
+  `rigidbodyField`, `collidersSet`, `networkRigidbody` and `enabled`
+  so one field log answers most follow-up questions.
