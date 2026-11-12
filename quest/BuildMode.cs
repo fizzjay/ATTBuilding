@@ -756,6 +756,13 @@ namespace ATTBuildingQuest
                                 _refNullsDumped = true;
                                 _refPickup = best;
                                 DumpNullMembers(best, "refnull");
+                                // 0.4.19: learn the native template from
+                                // ANY real Pickup in the scene (except the
+                                // console's own 'Grab' handle, whose point
+                                // is specialised), so the retrofit does not
+                                // depend on the user spawning a Stick first.
+                                if (best.gameObject.name != "Grab")
+                                    CaptureNativeTemplate(best.gameObject, best);
                             }
                             else Diag.Log("grabdiag ref: no other Pickup in scene to compare with.");
                         }
@@ -832,6 +839,7 @@ namespace ATTBuildingQuest
             try
             {
                 object list = ReadMemberWalk(hand, "_OverlapInteractables");
+                if (list == Unreadable || list == null) list = ReadMemberWalk(hand, "_OverlapInteractables_k__BackingField");
                 if (list == Unreadable || list == null) list = ReadMemberWalk(hand, "OverlapInteractables");
                 int count = -1;
                 bool contains = false;
@@ -854,7 +862,20 @@ namespace ATTBuildingQuest
                     var cnt = ReadMemberWalk(list, "Count");
                     if (cnt is int) count = (int)cnt;
                 }
+                int overlapCols = -1;
+                var overlapObj = ReadMemberWalk(hand, "overlap");
+                if (overlapObj != null && overlapObj != Unreadable)
+                {
+                    var oc = ReadMemberWalk(overlapObj, "Length");
+                    if (oc is int) overlapCols = (int)oc;
+                    else
+                    {
+                        var ocArr = overlapObj as System.Collections.IEnumerable;
+                        if (ocArr != null) { overlapCols = 0; foreach (var ignored in ocArr) overlapCols++; }
+                    }
+                }
                 Diag.Log("handscan: mask=" + ScanValue(ReadMemberWalk(hand, "collisionMask"))
+                    + " overlapCols=" + overlapCols
                     + " layer=" + ScanValue(ReadMemberWalk(hand, "collisionLayer"))
                     + " radius=" + ScanValue(ReadMemberWalk(hand, "radius"))
                     + " length=" + ScanValue(ReadMemberWalk(hand, "length"))
@@ -910,6 +931,19 @@ namespace ATTBuildingQuest
                     + variant);
             }
             catch (Exception ex) { Diag.Log("grabprobe " + tag + " failed: " + ex.Message); }
+            try
+            {
+                var bg = pickup.BestGrab;
+                if (bg != null)
+                    Diag.Log("bestgrab " + tag + ": pos=" + ScanValue(ReadMemberWalk(bg, "position"))
+                        + " lastPos=" + ScanValue(ReadMemberWalk(bg, "LastPosition"))
+                        + " mode=" + ScanValue(ReadMemberWalk(bg, "rotationMode"))
+                        + " usingLocal=" + ScanValue(ReadMemberWalk(bg, "isUsingLocal"))
+                        + " ignoreAngle=" + ScanValue(ReadMemberWalk(bg, "isIgnoringAngle"))
+                        + " gpTransform=" + ScanValue(ReadMemberWalk(bg, "transform"))
+                        + " gpScale=" + SafeMember(pickup, "grabPointsScale"));
+            }
+            catch { }
         }
 
         private static string InvokeProbe(object target, string name, object[] args)
@@ -951,6 +985,7 @@ namespace ATTBuildingQuest
         private static bool _templateCaptured;
         private static int _templateRootLayer = -1;
         private static int _templateColliderLayer = -1;
+        private static float _templateGrabPointsScale = -1f;
         private static System.Collections.Generic.Dictionary<string, object> _gpTemplateValues;
         private static bool _templateAppliedLogged;
         private static bool _ourProfileDumped;
@@ -1000,7 +1035,10 @@ namespace ATTBuildingQuest
                 Diag.Log("profile " + tag + ": '" + go.name + "' rootLayer=" + go.layer + " (" + LayerMask.LayerToName(go.layer) + ")"
                     + " rbKinematic=" + Safe(() => pickup.Rigidbody != null && pickup.Rigidbody.isKinematic)
                     + " rbDetect=" + Safe(() => pickup.Rigidbody == null ? "norb" : pickup.Rigidbody.detectCollisions.ToString())
-                    + " isNetworked=" + SafeMember(pickup, "IsNetworked"));
+                    + " isNetworked=" + SafeMember(pickup, "IsNetworked")
+                    + " gpScale=" + SafeMember(pickup, "grabPointsScale")
+                    + " tight=" + SafeMember(pickup, "isTightGrab")
+                    + " joint=" + SafeMember(pickup, "jointType"));
                 int shown = 0;
                 foreach (var col in go.GetComponentsInChildren<Collider>())
                 {
@@ -1043,10 +1081,17 @@ namespace ATTBuildingQuest
                     values[slot.Name] = v;
                 }
                 _gpTemplateValues = values;
+                // The Pickup's own scalars travel with the template: a
+                // runtime-added Pickup has C# defaults (grabPointsScale
+                // 0?) where the prefab carries design values, and
+                // GrabPoint.CheckScore receives that scale.
+                var scaleObj = ReadMemberWalk(pickup, "grabPointsScale");
+                if (scaleObj is float) _templateGrabPointsScale = (float)scaleObj;
                 _templateCaptured = true;
                 Diag.Log("buildmode: native grab template captured from '" + go.name + "' (rootLayer=" + _templateRootLayer + " (" + LayerMask.LayerToName(_templateRootLayer) + ")"
                     + ", colliderLayer=" + _templateColliderLayer + " (" + LayerMask.LayerToName(_templateColliderLayer) + ")"
-                    + ", gpMembers=" + values.Count + ") -- retrofitting our spawned pieces.");
+                    + ", gpMembers=" + values.Count
+                    + ", gpScale=" + _templateGrabPointsScale + ") -- retrofitting our spawned pieces.");
                 foreach (int id in TrackedRegistry.Snapshot())
                 {
                     if (!_addedIds.Contains(id)) continue;
@@ -1086,6 +1131,8 @@ namespace ATTBuildingQuest
                 // overlap scan with a giant trigger candidate.
                 foreach (var col in go.GetComponentsInChildren<Collider>())
                     if (col != null && !col.isTrigger) col.gameObject.layer = _templateColliderLayer;
+                if (_templateGrabPointsScale >= 0f)
+                    TrySetMemberWalk(pickup, "grabPointsScale", _templateGrabPointsScale);
                 if (!_templateAppliedLogged) { _templateAppliedLogged = true; Diag.Log("buildmode: native layers applied to '" + go.name + "' (root=" + _templateRootLayer + ", colliders=" + _templateColliderLayer + ")."); }
             }
             catch { }
@@ -1146,6 +1193,9 @@ namespace ATTBuildingQuest
         private static int _dwellPickupId;
         private static float _dwellStart;
         private static float _nextBackupAttempt;
+        private static Pickup _pendingGrabPickup;
+        private static Interactor _pendingGrabHand;
+        private static float _pendingGrabEngageAt;
         private static Pickup _manualCarry;
         private static Interactor _manualHand;
         private static Vector3 _carryLocalPos;
@@ -1159,6 +1209,24 @@ namespace ATTBuildingQuest
             try
             {
                 if (_manualCarry != null) { UpdateManualCarry(); return; }
+                if (_pendingGrabPickup != null)
+                {
+                    bool took = false;
+                    try { took = _pendingGrabHand != null && _pendingGrabHand.IsInteracting; } catch { }
+                    if (took)
+                    {
+                        Diag.Log("backupgrab: the game took the hold on '" + _pendingGrabPickup.gameObject.name + "' during the grace period (native grab).");
+                        _pendingGrabPickup = null; _pendingGrabHand = null;
+                    }
+                    else if (Time.time >= _pendingGrabEngageAt)
+                    {
+                        var p = _pendingGrabPickup; var h = _pendingGrabHand;
+                        _pendingGrabPickup = null; _pendingGrabHand = null;
+                        StartManualCarry(h, p);
+                    }
+                    else return; // still waiting on the game; don't dwell-scan
+                    if (_manualCarry != null) { UpdateManualCarry(); return; }
+                }
                 float now = Time.time;
                 var player = PlayerController.Current;
                 if (player == null) return;
@@ -1213,6 +1281,7 @@ namespace ATTBuildingQuest
 
         private static void AttemptBackupGrab(Interactor hand, Pickup pickup)
         {
+            float now0 = Time.time;
             string via = TryGameGrab(pickup, hand);
             bool held = false;
             try { held = hand.IsInteracting; } catch { }
@@ -1220,6 +1289,22 @@ namespace ATTBuildingQuest
                 + " -> interacting=" + held
                 + " interactors=" + Safe(() => pickup.Interactors.Count));
             if (held) return;
+            // 0.4.19: do not engage manual carry immediately. Interact()
+            // registers an interactor synchronously but the hand only
+            // reports IsInteracting seconds later (network confirmation);
+            // when anyone is registered, give the game up to 3 s to take
+            // the hold before we start driving the piece ourselves.
+            int registered = 0;
+            try { registered = pickup.Interactors.Count; } catch { }
+            _pendingGrabPickup = pickup;
+            _pendingGrabHand = hand;
+            _pendingGrabEngageAt = now0 + (registered > 0 ? 3.0f : 0.75f);
+            Diag.Log("backupgrab: waiting " + (registered > 0 ? "3s" : "0.75s") + " for the game to take '" + pickup.gameObject.name + "' (interactors=" + registered + ") before manual carry.");
+        }
+
+        private static void StartManualCarry(Interactor hand, Pickup pickup)
+        {
+            if (pickup == null || hand == null) return;
             // The game refused even a direct grab call: carry it ourselves.
             _manualCarry = pickup;
             _manualHand = hand;

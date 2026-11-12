@@ -598,3 +598,49 @@ Field-check: `handscan:` (does `containsTarget` ever read True for our
 pieces?), `grabprobe:` score per `variant=`, and whether grabbing now
 works natively; if not, whether dwell-grab / manual carry gives a
 usable way to move Anvils and Map Boards.
+
+## 0.4.19 backup grab proven; template from any native Pickup
+
+The 0.4.18 field session answered the big questions:
+
+- **The backup grab works.** Dwell-grab called the game's own
+  `Interact(hand)`, which registered an interactor immediately; the
+  hand only reported `IsInteracting` ~2.3 s later (network
+  confirmation) and the native hold then took over. When it didn't,
+  manual carry picked the Anvil up and put it down cleanly, twice.
+- **Discovery is still dead for our pieces:** `handscan:` showed
+  `candidates=0 containsTarget=False` throughout -- the hand's own
+  scan never lists a runtime-added Pickup.
+- **The A/B/C isolation silently never ran:** the user spawned only
+  Anvils that session, and the native template was only captured from
+  console-spawned items, so points were built the pre-template way
+  and the score stayed ~832k (~912 squared: the winning point still
+  evaluates at the world origin).
+- New suspect for the origin score: `grabPointsScale`, a float the
+  prefab sets that a runtime-added Pickup leaves at the C# default.
+  Never compared ours-vs-native until now.
+
+0.4.19 changes:
+
+- The native template is now captured from **any** real Pickup the
+  poller finds in the scene (except the console's own 'Grab' handle),
+  so retrofit no longer depends on spawning a Stick first; the A/B/C
+  variant cycle will now actually run.
+- The template also captures the Pickup's `grabPointsScale` and
+  applies it to our pieces; profiles log `gpScale=`/`tight=`/`joint=`
+  for ours-vs-native comparison.
+- Each probe now dumps the winning point (`bestgrab:` -- position,
+  LastPosition, mode, transform, scale) so we can see exactly which
+  GrabPoint the game picked and where it evaluated.
+- Backup grab now waits before manual carry: 3 s when `Interact()`
+  registered an interactor (the game took the Anvil natively inside
+  that window in 0.4.18), 0.75 s otherwise -- no more fighting the
+  game's incoming hold.
+- Handscan also reads the backing-field candidate list and the raw
+  physics `overlap` collider count.
+
+Field-check: do `whole-mesh grab ... variant=B-single-native` /
+`C-mesh-pole` probe scores drop below 832k, what does `profile ours:`
+say for `gpScale=` vs native, what does `bestgrab:` show, and does
+the Anvil now grab natively (or via dwell) without a manual-carry
+fight?

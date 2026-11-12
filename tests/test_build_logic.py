@@ -332,6 +332,30 @@ def test_grab_pipeline_instrumented():
         assert '"bestGrab", "BestGrab", "dockedMemoryLeft", "dockedMemoryRight"' in s, f
         # dynamic station pieces fell through the world: freeze ours
         assert "FreezeBody(go, pickup)" in s, f
+        # 0.4.18: match native exactly (GrabPoint transform cleared, not
+        # wired), never re-layer trigger colliders, read the hand's own
+        # discovery list, A/B/C the GrabPoint design per probe, and the
+        # backup dwell-grab ("grab legit everything") with manual carry
+        assert "TryClearMemberWalk(gp, \"transform\")" in s, f
+        assert "!col.isTrigger" in s, f
+        assert "DumpHandScan(hand, pickup)" in s, f
+        assert "handscan:" in s, f
+        assert '"_OverlapInteractables"' in s, f
+        assert "VariantName(_installVariant)" in s, f
+        assert "B-single-native" in s, f
+        assert "PollBackupGrab()" in s, f
+        assert "backupgrab:" in s, f
+        assert "TryGameGrab(pickup, hand)" in s, f
+        assert "MANUAL CARRY" in s, f
+        # 0.4.19: template captured from any scene Pickup (not only a
+        # spawned Stick), grabPointsScale templated too, winning
+        # bestGrab dumped per probe, manual carry waits out the game's
+        # delayed native hold before engaging
+        assert "CaptureNativeTemplate(best.gameObject, best)" in s, f
+        assert "_templateGrabPointsScale" in s, f
+        assert "bestgrab " in s, f
+        assert "_pendingGrabEngageAt" in s, f
+        assert "before manual carry" in s, f
         assert "DumpGrabSignatures(pickup)" in s, f
         assert "sig: " in s, f
         # ... and Pickup.Colliders (populated by Awake, which ran too early)
@@ -349,7 +373,7 @@ def test_grab_pipeline_instrumented():
         assert "pickup.enabled = true" in s, f
         assert "hasNetEntity=" in s, f
     for f in ("quest/Main.cs", "pchost/Main.cs"):
-        assert 'Version = "0.4.18"' in read(f), f
+        assert 'Version = "0.4.19"' in read(f), f
 
 
 if __name__ == "__main__":
