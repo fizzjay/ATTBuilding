@@ -384,3 +384,18 @@ means the hand's candidate scan never selects the object; an
 interactors flip with no hold means `Interact` itself refuses. The
 0.4.9 runtime-Pickup fixes (`Initialize()`, filling `Colliders`) are
 unchanged.
+
+## 0.4.11 link + enable runtime Pickups before Initialize
+
+The 0.4.10 field log (no crash -- the polling replacement works)
+showed the anvil's runtime-added Pickup starting `enabled=False,
+entityLinked=False`, and `Initialize()` NRE-ing inside `Pickup.Awake`
+at `add_Undocked`. A disabled Interactable is invisible to the hand's
+candidate scan, and `Interact()` dereferences `Entity`, so the grab
+never stood a chance. The game's spawn pipeline links behaviours to
+their NetworkEntity before Awake; 0.4.11 copies that order for added
+pickups: find the object's NetworkEntity and reflect it into the
+Pickup's Entity member, force `enabled = true`, then call
+`Initialize()`, then re-enable if Initialize disabled it again. The
+grabbable dump line also reports `hasNetEntity=`. Still open whether
+the missing NetworkRigidbody matters for carrying the object.

@@ -292,8 +292,13 @@ def test_grab_pipeline_instrumented():
         # ... and Pickup.Colliders (populated by Awake, which ran too early)
         assert 'Call(pickup.Colliders, "Add", c)' in s, f
         assert "entityLinked=" in s, f
+        # 0.4.11: runtime Pickups start disabled + entity-unlinked; link the
+        # NetworkEntity first, force enabled, then Initialize (in that order)
+        assert 'TrySet(pickup, "Entity", netEntity)' in s, f
+        assert "pickup.enabled = true" in s, f
+        assert "hasNetEntity=" in s, f
     for f in ("quest/Main.cs", "pchost/Main.cs"):
-        assert 'Version = "0.4.10"' in read(f), f
+        assert 'Version = "0.4.11"' in read(f), f
 
 
 if __name__ == "__main__":

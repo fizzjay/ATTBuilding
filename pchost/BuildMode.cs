@@ -55,13 +55,35 @@ namespace ATTBuilding
                 try { points = pickup.GrabPoints == null ? 0 : pickup.GrabPoints.Length; } catch { }
                 if (added)
                 {
-                    // Awake ran at AddComponent, but a network behaviour only
-                    // becomes part of its entity in Initialize() -- which the
-                    // game calls during entity setup, long before we added
-                    // this. Run it now (guarded: if the entity refuses a
-                    // late behaviour we learn that here, not silently).
-                    try { pickup.Initialize(); Diag.Log("buildmode: Initialize() ran for added Pickup on '" + go.name + "'."); }
+                    // 0.4.10 field log: a runtime-added Pickup on a networked
+                    // prefab starts DISABLED and entity-unlinked
+                    // (enabled=False, entityLinked=False). A disabled
+                    // Interactable is invisible to the hand's candidate
+                    // scan, and Interact() dereferences Entity, so both
+                    // must be fixed. The game's spawn pipeline links each
+                    // behaviour to its NetworkEntity BEFORE Awake runs;
+                    // our first Initialize() attempt NRE'd inside
+                    // Pickup.Awake at add_Undocked -- most plausibly on
+                    // that null Entity. Order matters: link, enable, init.
+                    try
+                    {
+                        var netEntity = go.GetComponentInChildren<NetworkEntity>();
+                        if (netEntity != null && pickup.Entity == null)
+                        {
+                            bool linked = TrySet(pickup, "Entity", netEntity)
+                                || TrySet(pickup, "<Entity>k__BackingField", netEntity)
+                                || TrySet(pickup, "entity", netEntity)
+                                || TrySet(pickup, "_entity", netEntity);
+                            Diag.Log("buildmode: entity link for '" + go.name + "': attempted=" + linked + ", entityLinked=" + (pickup.Entity != null));
+                        }
+                        else if (netEntity == null) Diag.Log("buildmode: '" + go.name + "' has NO NetworkEntity component to link a Pickup to.");
+                    }
+                    catch (Exception lex) { Diag.Log("buildmode: entity link failed for '" + go.name + "': " + lex.Message); }
+                    try { pickup.enabled = true; } catch { }
+                    try { pickup.Initialize(); Diag.Log("buildmode: Initialize() ran for added Pickup on '" + go.name + "' (entityLinked=" + (pickup.Entity != null) + ", enabled=" + pickup.enabled + ")."); }
                     catch (Exception iex) { Diag.Log("buildmode: Initialize() FAILED for '" + go.name + "': " + iex.Message); }
+                    // Initialize may leave the behaviour disabled again.
+                    try { if (!pickup.enabled) { pickup.enabled = true; Diag.Log("buildmode: re-enabled Pickup on '" + go.name + "' after Initialize."); } } catch { }
                 }
                 try
                 {
@@ -71,6 +93,7 @@ namespace ATTBuilding
                         + ", rigidbodyField=" + (pickup.Rigidbody != null)
                         + ", collidersSet=" + pickup.Colliders.Count
                         + ", networkRigidbody=" + (go.GetComponent<NetworkRigidbody>() != null)
+                        + ", hasNetEntity=" + (go.GetComponentInChildren<NetworkEntity>() != null)
                         + ", enabled=" + pickup.enabled + " (grab it like an item).");
                 }
                 catch (Exception lex) { Diag.Log("buildmode: grabbable '" + go.name + "': pickup " + (added ? "ADDED" : "present") + ", grabPoints=" + points + " (state dump failed: " + lex.Message + ")"); }
