@@ -273,6 +273,24 @@ def test_reported_build_errors_stay_fixed():
         assert "object field" in hook and "ReadInputText(field)" in hook
         assert "(RuntimeConsole __instance, InputField" not in hook
 
+def test_grab_pipeline_instrumented():
+    for f in ("quest/BuildMode.cs", "pchost/BuildMode.cs"):
+        s = read(f)
+        # log-only diagnostics on the game's own grab pipeline
+        assert '[HarmonyPatch(typeof(Pickup), "AssessScore")]' in s, f
+        assert '[HarmonyPatch(typeof(Pickup), "CheckInteractAllowedAndReplace")]' in s, f
+        assert "grabdiag:" in s, f
+        # only tracked (console-spawned) objects are logged
+        assert "TrackedRegistry.Contains(id)" in s, f
+        # runtime-added Pickup must be Initialized into its entity ...
+        assert "pickup.Initialize()" in s, f
+        # ... and Pickup.Colliders (populated by Awake, which ran too early)
+        assert 'Call(pickup.Colliders, "Add", c)' in s, f
+        assert "entityLinked=" in s, f
+    for f in ("quest/Main.cs", "pchost/Main.cs"):
+        assert 'Version = "0.4.9"' in read(f), f
+
+
 if __name__ == "__main__":
     for name, fn in sorted(list(globals().items())):
         if name.startswith("test_"): fn(); print("ok", name)
