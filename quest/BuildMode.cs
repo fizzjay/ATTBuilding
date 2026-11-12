@@ -52,10 +52,11 @@ namespace ATTBuildingQuest
                     added = true;
                 }
                 FixupPickupFields(go, pickup);
-                if (added) HydratePickupFields(pickup);
+                if (added) HydratePickupGraph(pickup);
+                if (added) DumpGrabSignatures(pickup);
                 int points = 0;
                 try { points = pickup.GrabPoints == null ? 0 : pickup.GrabPoints.Length; } catch { }
-                if (points == 0) InstallSurfaceGrabPoint(go, pickup);
+                if (points == 0) InstallSurfaceGrabPoints(go, pickup);
                 try { points = pickup.GrabPoints == null ? 0 : pickup.GrabPoints.Length; } catch { }
                 if (added)
                 {
@@ -91,7 +92,7 @@ namespace ATTBuildingQuest
                         // re-run Pickup.Awake, which NREs at add_Undocked
                         // on runtime-added components -- do NOT call it.
                         // Awake's field setup is replicated by
-                        // FixupPickupFields + HydratePickupFields instead.
+                        // FixupPickupFields + HydratePickupGraph instead.
                         Diag.Log("buildmode: skipping Initialize() for '" + go.name + "' (entity registered via setter; Awake NREs on runtime-added Pickups).");
                     }
                     else
@@ -143,28 +144,100 @@ namespace ATTBuildingQuest
             try { var nrb = go.GetComponent<NetworkRigidbody>(); if (nrb != null) TrySet(pickup, "networkRigidbody", nrb); } catch { }
         }
 
-        // 'Grab the surface' (the ArmorSurfaceGrip idea, using the game's own
-        // GrabPoint surface mode instead of Harmony): one GrabPoint whose
-        // position is the object's bounds centre and whose poleForward is the
-        // bounds extents -- CheckScore clamps the hand onto that box, so you
-        // can grab the object anywhere on its surface, angle ignored.
-        private static void InstallSurfaceGrabPoint(GameObject go, Pickup pickup)
+        // Whole-mesh grabbing (user requirement: grab the spawned object
+        // ANYWHERE on its mesh, not at one sweet spot). Instead of a single
+        // GrabPoint, cover the collider bounds with surface GrabPoints --
+        // centre, six face centres, twelve edge centres -- each in
+        // RotationMode.Surface with angle checks ignored, each wired back
+        // to its Pickup. The hand's scoring then always finds a point
+        // within half an extent of wherever it touches the mesh.
+        private static void InstallSurfaceGrabPoints(GameObject go, Pickup pickup)
         {
             Bounds bounds = LocalBounds(go, pickup.transform);
-            var gp = new GrabPoint();
-            gp.rotationMode = RotationMode.Surface;
-            TrySet(gp, "position", bounds.center);
-            var ext = bounds.extents;
-            ext = new Vector3(Mathf.Max(ext.x, 0.03f), Mathf.Max(ext.y, 0.03f), Mathf.Max(ext.z, 0.03f));
-            TrySet(gp, "poleForward", ext);
-            TrySet(gp, "isIgnoringAngle", true);
-            // IL2CPP: grabPoints is an Il2CppReferenceArray<GrabPoint>, not a
-            // managed GrabPoint[] -- a plain array fails ConvertTo with
-            // 'Object must implement IConvertible' (the 0.4.7 failure).
-            var arr = new Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppReferenceArray<GrabPoint>(1);
-            arr[0] = gp;
+            Vector3 c = bounds.center;
+            Vector3 e = bounds.extents;
+            var ext = new Vector3(Mathf.Max(e.x, 0.03f), Mathf.Max(e.y, 0.03f), Mathf.Max(e.z, 0.03f));
+            var positions = new System.Collections.Generic.List<Vector3>();
+            positions.Add(c);
+            positions.Add(c + new Vector3(ext.x, 0f, 0f));
+            positions.Add(c - new Vector3(ext.x, 0f, 0f));
+            positions.Add(c + new Vector3(0f, ext.y, 0f));
+            positions.Add(c - new Vector3(0f, ext.y, 0f));
+            positions.Add(c + new Vector3(0f, 0f, ext.z));
+            positions.Add(c - new Vector3(0f, 0f, ext.z));
+            float k = 0.7f;
+            positions.Add(c + new Vector3(ext.x * k, ext.y * k, 0f));
+            positions.Add(c + new Vector3(ext.x * k, -ext.y * k, 0f));
+            positions.Add(c + new Vector3(-ext.x * k, ext.y * k, 0f));
+            positions.Add(c + new Vector3(-ext.x * k, -ext.y * k, 0f));
+            positions.Add(c + new Vector3(ext.x * k, 0f, ext.z * k));
+            positions.Add(c + new Vector3(ext.x * k, 0f, -ext.z * k));
+            positions.Add(c + new Vector3(-ext.x * k, 0f, ext.z * k));
+            positions.Add(c + new Vector3(-ext.x * k, 0f, -ext.z * k));
+            positions.Add(c + new Vector3(0f, ext.y * k, ext.z * k));
+            positions.Add(c + new Vector3(0f, ext.y * k, -ext.z * k));
+            positions.Add(c + new Vector3(0f, -ext.y * k, ext.z * k));
+            positions.Add(c + new Vector3(0f, -ext.y * k, -ext.z * k));
+            var made = new System.Collections.Generic.List<GrabPoint>();
+            foreach (var p in positions)
+            {
+                var gp = new GrabPoint();
+                gp.rotationMode = RotationMode.Surface;
+                TrySet(gp, "position", p);
+                TrySet(gp, "poleForward", ext);
+                TrySet(gp, "isIgnoringAngle", true);
+                SetGrabPointOwner(gp, pickup);
+                made.Add(gp);
+            }
+            var arr = new Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppReferenceArray<GrabPoint>(made.Count);
+            for (int i = 0; i < made.Count; i++) arr[i] = made[i];
             TrySet(pickup, "grabPoints", arr);
-            Diag.FileOnly("buildmode: surface grab point on '" + go.name + "' centre=" + bounds.center + " extents=" + ext);
+            Diag.Log("buildmode: whole-mesh grab on '" + go.name + "': " + made.Count + " surface grab points, extents=" + ext);
+        }
+
+        private static bool _ownerLogged;
+
+        // A GrabPoint created in code does not know its Pickup until
+        // something sets the back-reference (normally the editor/Awake
+        // cycle: Pickup.Awake assigns itself into each point). A point
+        // whose owner is null plausibly scores nothing or throws inside
+        // CheckScore. Try the plausible member names with a full hierarchy
+        // walk and type check; log the one that sticks (checked once).
+        private static void SetGrabPointOwner(GrabPoint gp, Pickup pickup)
+        {
+            foreach (var name in new[] { "interactable", "interactableObject", "owner", "pickup", "_interactable" })
+            {
+                if (TrySetMemberWalk(gp, name, pickup))
+                {
+                    if (!_ownerLogged) { _ownerLogged = true; Diag.Log("buildmode: GrabPoint owner set via '" + name + "'"); }
+                    return;
+                }
+            }
+            if (!_ownerLogged) { _ownerLogged = true; Diag.Log("buildmode: GrabPoint has NO owner member (tried interactable/interactableObject/owner/pickup)"); }
+        }
+
+        // Hierarchy-walking, non-public-aware member set with a type check.
+        // ConsoleHook.SetMember is declared-type/public-only and silently
+        // no-ops on a miss, so owner/link wiring uses this instead.
+        private static bool TrySetMemberWalk(object target, string name, object value)
+        {
+            if (target == null || value == null) return false;
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly;
+            for (var type = target.GetType(); type != null && type != typeof(object); type = type.BaseType)
+            {
+                var field = type.GetField(name, flags);
+                if (field != null && field.FieldType.IsInstanceOfType(value))
+                {
+                    try { field.SetValue(target, value); return true; } catch { return false; }
+                }
+                var prop = type.GetProperty(name, flags);
+                if (prop != null && prop.GetIndexParameters().Length == 0 && prop.PropertyType.IsInstanceOfType(value))
+                {
+                    var setter = prop.GetSetMethod(true);
+                    if (setter != null) { try { setter.Invoke(target, new object[] { value }); return true; } catch { return false; } }
+                }
+            }
+            return false;
         }
 
         private static Bounds LocalBounds(GameObject go, Transform local)
@@ -256,37 +329,111 @@ namespace ATTBuildingQuest
         // subscription -- so those getters NRE forever (0.4.12 poller:
         // docked=?) and the game's candidate evaluation likely throws on
         // this object and discards it. Replicate that part of Awake: fill
-        // every null array/collection field with an empty instance.
-        private static void HydratePickupFields(Pickup pickup)
+        // every null array/collection member with an empty instance.
+        // 0.4.13 walked FIELDS only and logged nothing: on IL2CPP the
+        // interop wrappers expose native fields as PROPERTIES, so the walk
+        // saw an empty class. Enumerate both, over the full hierarchy.
+        // Members legitimately wired elsewhere (entity link,
+        // [GetComponent] injections, grabPoints) are skipped -- their own
+        // steps set them.
+        private static readonly string[] HydrateSkip =
+        {
+            "entity", "Entity", "transform", "gameObject", "rigidbody",
+            "networkRigidbody", "grabPoints", "childrenColliders", "Colliders",
+            "IsGrabbed", "IsDocked",
+        };
+
+        private static readonly object Unreadable = new object();
+
+        private sealed class MemberSlot
+        {
+            public string Name;
+            public Type MemberType;
+            public string Declaring;
+            public System.Reflection.FieldInfo Field;
+            public System.Reflection.PropertyInfo Property;
+            public object Read(object target)
+            {
+                try { return Field != null ? Field.GetValue(target) : Property.GetValue(target, null); }
+                catch { return Unreadable; }
+            }
+            public bool Write(object target, object value)
+            {
+                try
+                {
+                    if (Field != null) { Field.SetValue(target, value); return true; }
+                    var setter = Property.GetSetMethod(true);
+                    if (setter == null) return false;
+                    setter.Invoke(target, new object[] { value });
+                    return true;
+                }
+                catch { return false; }
+            }
+        }
+
+        private static System.Collections.Generic.List<MemberSlot> PickupMembers(Type root)
         {
             const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly;
-            for (var type = pickup.GetType(); type != null && type != typeof(object); type = type.BaseType)
+            var slots = new System.Collections.Generic.List<MemberSlot>();
+            var seen = new System.Collections.Generic.HashSet<string>();
+            for (var type = root; type != null && type != typeof(object); type = type.BaseType)
             {
                 foreach (var field in type.GetFields(flags))
                 {
-                    object current;
-                    try { current = field.GetValue(pickup); } catch { continue; }
-                    if (current != null) continue;
-                    var ft = field.FieldType;
-                    try
-                    {
-                        if (ft.IsArray)
-                        {
-                            field.SetValue(pickup, System.Array.CreateInstance(ft.GetElementType(), 0));
-                            Diag.Log("buildmode: hydrated '" + field.Name + "' (" + type.Name + ") as empty array");
-                        }
-                        else if (ft.IsClass && ft != typeof(string) && !typeof(UnityEngine.Object).IsAssignableFrom(ft)
-                            && (ft.Name.StartsWith("List") || ft.Name.StartsWith("HashSet") || ft.Name.StartsWith("Dictionary") || ft.Name.StartsWith("Queue") || ft.Name.StartsWith("Stack"))
-                            && ft.GetConstructor(Type.EmptyTypes) != null)
-                        {
-                            field.SetValue(pickup, Activator.CreateInstance(ft));
-                            Diag.Log("buildmode: hydrated '" + field.Name + "' (" + type.Name + ") as new " + ft.Name);
-                        }
-                    }
-                    catch (Exception ex) { Diag.FileOnly("buildmode: hydrate '" + field.Name + "': " + ex.Message); }
+                    if (!seen.Add(field.Name)) continue;
+                    slots.Add(new MemberSlot { Name = field.Name, MemberType = field.FieldType, Declaring = type.Name, Field = field });
+                }
+                foreach (var prop in type.GetProperties(flags))
+                {
+                    if (!prop.CanRead || prop.GetIndexParameters().Length > 0 || !seen.Add(prop.Name)) continue;
+                    slots.Add(new MemberSlot { Name = prop.Name, MemberType = prop.PropertyType, Declaring = type.Name, Property = prop });
                 }
             }
-            DumpNullFields(pickup);
+            return slots;
+        }
+
+        private static void HydratePickupGraph(Pickup pickup)
+        {
+            int made = 0;
+            var names = new System.Collections.Generic.List<string>();
+            foreach (var slot in PickupMembers(pickup.GetType()))
+            {
+                if (System.Array.IndexOf(HydrateSkip, slot.Name) >= 0) continue;
+                if (slot.MemberType.IsValueType) continue;
+                var current = slot.Read(pickup);
+                if (current == Unreadable || current != null) continue;
+                var empty = TryMakeEmpty(slot.MemberType);
+                if (empty == null) continue;
+                if (slot.Write(pickup, empty)) { made++; names.Add(slot.Declaring + "." + slot.Name + " : " + slot.MemberType.Name); }
+            }
+            if (made > 0) Diag.Log("buildmode: hydrated " + made + " empty Pickup members (" + string.Join(", ", names.ToArray()) + ")");
+            else Diag.FileOnly("buildmode: hydration found no empty members to fill");
+            DumpNullMembers(pickup);
+        }
+
+        private static object TryMakeEmpty(Type type)
+        {
+            try
+            {
+                if (type == typeof(string)) return null;
+                if (typeof(Delegate).IsAssignableFrom(type)) return null;
+                if (typeof(UnityEngine.Object).IsAssignableFrom(type)) return null;
+                if (type.IsArray) return System.Array.CreateInstance(type.GetElementType(), 0);
+                if (type.IsGenericType)
+                {
+                    var def = type.GetGenericTypeDefinition();
+                    if (def == typeof(System.Collections.Generic.List<>)
+                        || def == typeof(System.Collections.Generic.HashSet<>)
+                        || def == typeof(System.Collections.Generic.Dictionary<,>)
+                        || def == typeof(System.Collections.Generic.Queue<>)
+                        || def == typeof(System.Collections.Generic.Stack<>))
+                        return Activator.CreateInstance(type);
+                }
+                if (type.IsClass && !type.IsAbstract && type.GetConstructor(Type.EmptyTypes) != null)
+                    return Activator.CreateInstance(type);
+            }
+            catch { }
+            return null;
         }
 
         private static bool _nullsDumped;
@@ -294,25 +441,69 @@ namespace ATTBuildingQuest
         // Whatever is STILL null after hydration is something Awake would
         // have wired to another object (a sibling component, a dock, ...).
         // Those names in the log tell us what to supply next.
-        private static void DumpNullFields(Pickup pickup)
+        private static void DumpNullMembers(Pickup pickup)
         {
             if (_nullsDumped) return;
             _nullsDumped = true;
-            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly;
             try
             {
-                for (var type = pickup.GetType(); type != null && type != typeof(object); type = type.BaseType)
+                var nulls = new System.Collections.Generic.List<string>();
+                foreach (var slot in PickupMembers(pickup.GetType()))
                 {
-                    foreach (var field in type.GetFields(flags))
-                    {
-                        if (field.FieldType.IsValueType) continue;
-                        object v;
-                        try { v = field.GetValue(pickup); } catch { continue; }
-                        if (v == null) Diag.Log("buildmode: still null: " + type.Name + "." + field.Name + " : " + field.FieldType.Name);
-                    }
+                    if (slot.MemberType.IsValueType) continue;
+                    var v = slot.Read(pickup);
+                    if (v != Unreadable && v == null) nulls.Add(slot.Declaring + "." + slot.Name + " : " + slot.MemberType.Name);
+                }
+                if (nulls.Count == 0) Diag.Log("buildmode: no null Pickup members remain");
+                else
+                {
+                    int shown = 0;
+                    foreach (var n in nulls) { if (++shown > 30) break; Diag.Log("buildmode: still null: " + n); }
+                    if (nulls.Count > 30) Diag.Log("buildmode: still null: ... +" + (nulls.Count - 30) + " more");
                 }
             }
-            catch (Exception ex) { Diag.Log("buildmode: null-field dump failed: " + ex.Message); }
+            catch (Exception ex) { Diag.Log("buildmode: null-member dump failed: " + ex.Message); }
+        }
+
+        private static bool _sigsDumped;
+
+        // One-shot (debug file only): the exact grab-pipeline signatures the
+        // game exposes, so the next step can invoke the game's own scoring
+        // or wiring reflectively instead of patching (Harmony on the
+        // ref-parameter AssessScore crashed Quest in 0.4.9 -- never re-add
+        // that; reflective Invoke handles ref/out legally).
+        private static void DumpGrabSignatures(Pickup pickup)
+        {
+            if (_sigsDumped) return;
+            _sigsDumped = true;
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly;
+            foreach (var root in new[] { pickup.GetType(), typeof(GrabPoint) })
+            {
+                for (var type = root; type != null && type != typeof(object) && type != typeof(MonoBehaviour) && type != typeof(Behaviour) && type != typeof(Component); type = type.BaseType)
+                {
+                    try
+                    {
+                        foreach (var method in type.GetMethods(flags))
+                        {
+                            var n = method.Name;
+                            bool interesting = n.IndexOf("Grab", StringComparison.Ordinal) >= 0
+                                || n.IndexOf("Interact", StringComparison.Ordinal) >= 0
+                                || n.IndexOf("Score", StringComparison.Ordinal) >= 0
+                                || n.IndexOf("Dock", StringComparison.Ordinal) >= 0
+                                || n.IndexOf("Assess", StringComparison.Ordinal) >= 0
+                                || n.IndexOf("Ensure", StringComparison.Ordinal) >= 0;
+                            if (!interesting) continue;
+                            var ps = new System.Collections.Generic.List<string>();
+                            foreach (var p in method.GetParameters())
+                                ps.Add((p.IsOut ? "out " : (p.ParameterType.IsByRef ? "ref " : "")) + p.ParameterType.Name + " " + p.Name);
+                            Diag.FileOnly("sig: " + type.Name + "." + method.Name + "(" + string.Join(", ", ps.ToArray()) + ") -> " + method.ReturnType.Name);
+                        }
+                        foreach (var prop in type.GetProperties(flags))
+                            Diag.FileOnly("prop: " + type.Name + "." + prop.Name + " : " + prop.PropertyType.Name + (prop.CanWrite ? " (set)" : ""));
+                    }
+                    catch { }
+                }
+            }
         }
 
         // SetMember silently no-ops when a member is missing and does not

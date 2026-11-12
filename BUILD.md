@@ -432,3 +432,39 @@ collection field on the Pickup is hydrated with an empty instance,
 remaining null fields are dumped by name (`still null:` lines), and
 the poller logs a one-shot `grabdiag ref:` snapshot of the nearest
 real game-spawned Pickup as ground truth for comparison.
+
+## 0.4.14 whole-mesh grabbing + property-aware hydration
+
+0.4.13's field test: the entity link and skip-Initialize hold
+(`entityLinked=True, grabPoints=1, collidersSet=6, enabled=True`), the
+reference Pickup comparison shows a working Pickup reads
+`docked=False` while ours still throws (`docked=?`), and `interactors`
+stays 0 even with the hand at 0.25 m. Two blind spots found: the
+hydration logged NOTHING (on IL2CPP the interop wrappers expose native
+fields as properties, so the field-only walk saw an empty class), and
+grab coverage was a single surface point.
+
+0.4.14 therefore:
+- Hydration enumerates fields AND properties over the full Pickup
+  hierarchy (`HydratePickupGraph`), fills null arrays/collections/
+  parameterless classes with empties, and `DumpNullMembers` lists what
+  is still null by name (`still null:` lines).
+- Whole-mesh grabbing per user request ("grab the whole mesh not just
+  one point"): `InstallSurfaceGrabPoints` covers the collider bounds
+  with 19 surface GrabPoints (centre, 6 face centres, 12 edge centres;
+  surface rotation mode, angle checks ignored), and each point gets its
+  owner back-reference to the Pickup via a hierarchy-walking set
+  (`GrabPoint owner set via '...'` log) -- Pickup.Awake normally wires
+  that; we set the array directly, so the points plausibly pointed at
+  nothing and CheckScore failed/threw silently.
+- One-shot `DumpGrabSignatures` writes the exact `sig:`/`prop:` shapes
+  of the grab pipeline (Pickup/Interactable/GrabPoint methods incl.
+  ref/out params, to the debug file only), so the game's own scoring
+  can be invoked reflectively next if still needed. Harmony patching of
+  ref-parameter methods remains forbidden (0.4.9 crash).
+
+Field-check in the next log: `hydrated N empty Pickup members (...)`,
+any remaining `still null:` names, `GrabPoint owner set via '...'`,
+`whole-mesh grab ... 19 surface grab points`, and whether
+`grabdiag:` flips `interactors`/`docked` when the hand touches the
+mesh anywhere.

@@ -292,9 +292,21 @@ def test_grab_pipeline_instrumented():
         # entity NOT being linked, and Awake's collection setup is
         # replicated by hydration instead
         assert "skipping Initialize()" in s, f
-        assert "HydratePickupFields(pickup)" in s, f
-        assert "DumpNullFields(pickup)" in s, f
+        # 0.4.14: field-only hydration was blind on IL2CPP (native fields
+        # surface as properties), so hydration walks fields AND properties
+        assert "HydratePickupGraph(pickup)" in s, f
+        assert "DumpNullMembers(pickup)" in s, f
+        assert "HydratePickupFields" not in s, f
         assert "grabdiag ref:" in s, f
+        # 0.4.14: whole-mesh grabbing -- many surface GrabPoints (the user
+        # requires grabbing anywhere on the mesh), each wired back to its
+        # Pickup, and a one-shot reflective dump of the grab pipeline so the
+        # game's own scoring can be invoked without Harmony
+        assert "InstallSurfaceGrabPoints(go, pickup)" in s, f
+        assert "whole-mesh grab" in s, f
+        assert "SetGrabPointOwner(gp, pickup)" in s, f
+        assert "DumpGrabSignatures(pickup)" in s, f
+        assert "sig: " in s, f
         # ... and Pickup.Colliders (populated by Awake, which ran too early)
         assert 'Call(pickup.Colliders, "Add", c)' in s, f
         assert "entityLinked=" in s, f
@@ -310,7 +322,7 @@ def test_grab_pipeline_instrumented():
         assert "pickup.enabled = true" in s, f
         assert "hasNetEntity=" in s, f
     for f in ("quest/Main.cs", "pchost/Main.cs"):
-        assert 'Version = "0.4.13"' in read(f), f
+        assert 'Version = "0.4.14"' in read(f), f
 
 
 if __name__ == "__main__":
