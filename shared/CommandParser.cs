@@ -3,7 +3,7 @@ using System.Globalization;
 
 namespace ATTBuilding
 {
-    public enum CommandKind { None, Help, Spawn, BuildMode, Snapping, SnapAngle, Grid, LivePositionSnap, List, Spawned, Clear, Unknown }
+    public enum CommandKind { None, Help, Spawn, ServerPing, BuildMode, Snapping, SnapAngle, Grid, LivePositionSnap, List, Spawned, Clear, Unknown }
 
     public sealed class ParsedCommand
     {
@@ -81,6 +81,7 @@ namespace ATTBuilding
             if (verb == "livesnap") { result.Kind = CommandKind.LivePositionSnap; result.Flag = i + 1 >= words.Length ? true : SnapMath.ParseBool(words[i + 1], true); return result; }
             if (verb == "list") { result.Kind = CommandKind.List; result.Text = Join(words, i + 1, words.Length); return result; }
             if (verb == "spawned") { result.Kind = CommandKind.Spawned; return result; }
+            if (verb == "ping") { result.Kind = CommandKind.ServerPing; return result; }
             if (verb == "clear" || verb == "despawn") { result.Kind = CommandKind.Clear; return result; }
             if (verb == "help" || verb == "?") { result.Kind = CommandKind.Help; return result; }
 
@@ -99,6 +100,7 @@ namespace ATTBuilding
             "build livesnap true|false - also snap position every frame while held (can fight the hand joint)",
             "build list [filter] - loaded prefab names you can spawn",
             "build spawned - how many console-spawned objects are tracked for build mode",
+            "build ping - ask the server whether ATTBuilding is installed/registered there (reply shows its version)",
             "build clear - remove every console-spawned object",
         };
 

@@ -24,11 +24,11 @@ def test_quantize_guarantees_straight_angles():
 
 def test_parser_commands_exist_in_both_platforms():
     parser = read("shared/CommandParser.cs")
-    for verb in ('"spawn"', '"mode"', '"snapping"', '"snapangle"', '"grid"', '"list"', '"spawned"', '"clear"', '"help"'):
+    for verb in ('"spawn"', '"ping"', '"mode"', '"snapping"', '"snapangle"', '"grid"', '"list"', '"spawned"', '"clear"', '"help"'):
         assert verb in parser, verb
     for platform in ("pchost", "quest"):
         hook = read(f"{platform}/ConsoleHook.cs")
-        for kind in ("CommandKind.Spawn", "CommandKind.BuildMode", "CommandKind.Snapping",
+        for kind in ("CommandKind.Spawn", "CommandKind.ServerPing", "CommandKind.BuildMode", "CommandKind.Snapping",
                      "CommandKind.SnapAngle", "CommandKind.Grid", "CommandKind.Clear"):
             assert kind in hook, (platform, kind)
 
@@ -94,6 +94,24 @@ def test_reported_build_errors_stay_fixed():
         assert "ValidPostfix" in bubble and '"IsValid"' in bubble
         assert "PatchDeclared" in bubble and "DeclaringType" in bubble
         assert '"displayName", "Building"' in bubble
+    # Spawn-timeout hunt (0.4.3): every hop logs, the server handler always
+    # replies (wrapped), registration happens only once this process is a
+    # server (an init-time Collect can be discarded and its latch would
+    # block the real one), and there is a ping probe.
+    server = read("pchost/ServerCommands.cs")
+    assert "server spawn: received" in server and "server ping: received" in server
+    assert "SpawnHelper.Spawn returned NULL" in server and "UNHANDLED EXCEPTION" in server
+    assert "DumpCommandCollection" in server and "DescribePlayers" in server
+    assert "TryRegisterWhenServer" in server and "TryRegisterWhenServer" in read("pchost/Main.cs")
+    assert "ServerCommands.Register();" not in read("pchost/Main.cs")  # no init-time Collect latch
+    assert "HarmonyPriority(800)" in read("pchost/ServerSeam.cs")
+    for proj in ("pchost", "quest"):
+        spawner = read(f"{proj}/Spawner.cs")
+        assert "PingServer" in spawner and "BeginWait(print, command)" in spawner
+        assert "CALLBACK from server" in spawner and "RouteCommand(" in spawner
+        assert "AuthorityDescription" in spawner and "LocalPlayerToken" in spawner
+        hook = read(f"{proj}/ConsoleHook.cs")
+        assert "_pendingCommand" in hook and "route: TIMEOUT after 10s" in hook
     # Console flight fix: it must be a locked panel, not a loose
     # zero-gravity physics body. It only unlocks while a local hand is
     # actually interacting with its Pickup, then freezes on release.

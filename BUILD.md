@@ -227,3 +227,32 @@ unlocked only while a local player's hand is actually interacting with
 the console's `Pickup`; on release both velocities are cleared and it
 locks again at the release pose. Merely touching, bumping, or clicking
 the console cannot move it.
+
+## 0.4.3 spawn timeout: log every hop, register only as server, `build ping`
+
+Diagnosis from the 16:44 log: the client resolves the prefab and routes
+`build spawn ...`, then no callback ever arrives. Three weaknesses fixed:
+
+- **Registration timing:** the PC build used to `Collect` at melon-init
+  and latch `_registered`. If the command collection is (re)created when
+  the server scene loads, that early Collect is discarded and the latch
+  blocked the real one. Registration now happens ONLY once this process
+  is a server: the `FirstInitialize` seam (priority 800, logged), with a
+  5 s server-state poll in `OnUpdate` as fallback. After Collect, the
+  server dumps the `CommandCollection` contents to its `debug.log`
+  (search `BUILD/SPAWN?` / "ZERO build commands").
+- **Server handler always replies:** `build spawn`/`build ping` are
+  wrapped end-to-end (ArmorRestored's `Run` pattern); entry, player match
+  (username OR numeric identifier; on a miss it lists who the server
+  sees), placement, and the `SpawnHelper` result all log, and exceptions
+  return an error string instead of vanishing into the client's timeout.
+- **Client side:** sends now log the resolved hash, authority flags
+  (`IsServer`/`IsLocalTest`), the local player token, `CommandSync`
+  state, callback arrivals, and the exact pending command on timeout.
+
+Field test: type **`build ping`** in the console. A server running this
+build answers with its version and whether your player matched. If ping
+times out too, the server either has no ATTBuilding PC build loaded
+(check its Melon log for `ATTBuilding 0.4.3 started (PC Mono)`) or the
+module never registered (its `debug.log` lacks `server: registering
+'build' module` / shows the "ZERO build commands" dump line).

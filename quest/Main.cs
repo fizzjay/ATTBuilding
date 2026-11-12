@@ -48,7 +48,7 @@ namespace ATTBuildingQuest
 
     internal static class Mod
     {
-        internal const string Version = "0.4.2";
+        internal const string Version = "0.4.3";
         internal static bool BubbleEnabled = true;
         internal static bool ConsoleEnabled = true;
         internal static bool SuppressDummy = true;

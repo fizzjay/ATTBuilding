@@ -60,24 +60,40 @@ namespace ATTBuildingQuest
         {
             string error;
             NetworkPrefab prefab = Resolve(name, out error);
-            if (prefab == null) { print(error); return; }
+            if (prefab == null) { Diag.Log("spawn: resolve failed for '" + name + "': " + error); print(error); return; }
+            Diag.Log("spawn: resolved '" + name + "' -> '" + Clean(prefab.name) + "' hash=" + prefab.Hash + " count=" + count
+                + " authority[" + AuthorityDescription() + "] localPlayer[" + LocalPlayerDescription() + "]");
             if (!HasAuthority())
             {
                 // Client on someone else's server: ask that server (if it runs
                 // the PC build) to spawn it authoritatively by hash.
-                string player = LocalPlayerName();
-                if (player == null) { print("Not spawned yet."); return; }
-                if (NetRoute.Send("build spawn " + player + " " + prefab.Hash, print))
-                { print("Asked the server to spawn " + Clean(prefab.name) + " x" + count + " ..."); ConsoleHook.BeginWait(print); }
+                string player = LocalPlayerToken();
+                if (player == null) { Diag.Log("spawn: cannot route: local player token unavailable (not spawned in yet)."); print("Not spawned yet."); return; }
+                string command = "build spawn " + player + " " + prefab.Hash;
+                if (NetRoute.Send(command, print))
+                { print("Asked the server to spawn " + Clean(prefab.name) + " x" + count + " ..."); ConsoleHook.BeginWait(print, command); }
                 else print("This client cannot spawn here (not the host/server) and no server command channel is open. Play local/host, or the server needs ATTBuilding (PC build).");
                 return;
             }
             Vector3 at; Quaternion rot;
-            if (!Placement(out at, out rot)) { print("No ground in front of you to spawn on."); return; }
+            if (!Placement(out at, out rot)) { Diag.Log("spawn: local authority but placement failed (player head missing)."); print("No ground in front of you to spawn on."); return; }
+            Diag.Log("spawn: local authority: placement at " + at + " facing " + rot.eulerAngles);
             int done = SpawnAuthoritative(prefab, at, rot, count);
+            Diag.Log("spawn: local authority result: " + done + "/" + count + " spawned.");
             print(done > 0
                 ? "Spawned " + Clean(prefab.name) + " x" + done + (BuildState.BuildMode ? " (build mode: grab it to move it)" : " (build spawn is tracked; 'build mode on' lets you grab it)")
                 : "Spawn failed (server refused or prefab cannot be spawned here).");
+        }
+
+        internal static void PingServer(Action<string> print)
+        {
+            Diag.Log("ping: requested; localPlayer[" + LocalPlayerDescription() + "] authority[" + AuthorityDescription() + "]");
+            if (HasAuthority()) { print("You are the server/local authority on this peer: ATTBuilding " + Mod.Version + " is loaded here, so spawning is local (no route needed)."); return; }
+            string player = LocalPlayerToken();
+            if (player == null) { print("Not spawned yet."); return; }
+            string command = "build ping " + player;
+            if (NetRoute.Send(command, print)) { print("Pinging the server for ATTBuilding (this client is " + Mod.Version + ") ..."); ConsoleHook.BeginWait(print, command); }
+            else print("Could not ping: no server command channel (CommandSync) is open here.");
         }
 
         // Authoritative spawn + build-mode registration. Also used by the PC
@@ -85,17 +101,20 @@ namespace ATTBuildingQuest
         internal static int SpawnAuthoritative(NetworkPrefab prefab, Vector3 at, Quaternion rot, int count)
         {
             int done = 0;
+            Diag.Log("spawn: SpawnAuthoritative prefab='" + Clean(prefab.name) + "' hash=" + prefab.Hash + " count=" + count + " at=" + at + " authority[" + AuthorityDescription() + "]");
             for (int i = 0; i < count; i++)
             {
                 try
                 {
-                    NetworkEntity entity = SpawnHelper.Spawn(prefab, SpawnData.Default, null,
-                        at + Vector3.up * (0.05f * i), rot, null);
-                    if (entity == null) continue;
+                    Vector3 thisAt = at + Vector3.up * (0.05f * i);
+                    Diag.FileOnly("spawn: attempt " + (i + 1) + "/" + count + " at " + thisAt);
+                    NetworkEntity entity = SpawnHelper.Spawn(prefab, SpawnData.Default, null, thisAt, rot, null);
+                    if (entity == null) { Diag.Log("spawn: SpawnHelper.Spawn returned NULL for '" + Clean(prefab.name) + "' (prefab refused here)."); continue; }
                     done++;
+                    Diag.Log("spawn: SpawnHelper created '" + entity.gameObject.name + "' instance=" + entity.gameObject.GetInstanceID());
                     Track(entity);
                 }
-                catch (Exception ex) { Mod.LogOnce("spawn: " + ex.Message); }
+                catch (Exception ex) { Diag.Log("spawn: SpawnHelper.Spawn EXCEPTION: " + ex); Mod.LogOnce("spawn: " + ex.Message); }
             }
             return done;
         }
@@ -179,6 +198,43 @@ namespace ATTBuildingQuest
             catch { return null; }
         }
 
+        // What we put in the routed command for "who wants this": the numeric
+        // Identifier when there is one (usernames can contain spaces, which
+        // the server console parser would split into extra arguments),
+        // else the username. The server accepts either (ArmorRestored's
+        // Players.Find does the same).
+        internal static string LocalPlayerToken()
+        {
+            try
+            {
+                var p = Player.Current == null ? null : Player.Current.TryCast<Player>();
+                if (p == null || p.UserInfo == null) return null;
+                return p.UserInfo.Identifier != 0 ? p.UserInfo.Identifier.ToString() : p.UserInfo.Username;
+            }
+            catch { return LocalPlayerName(); }
+        }
+
+        internal static string LocalPlayerDescription()
+        {
+            try
+            {
+                var p = Player.Current == null ? null : Player.Current.TryCast<Player>();
+                if (p == null) return "Player.Current=null";
+                if (p.UserInfo == null) return "UserInfo=null";
+                return "username='" + p.UserInfo.Username + "' identifier=" + p.UserInfo.Identifier + " token='" + LocalPlayerToken() + "'";
+            }
+            catch (Exception ex) { return "unavailable: " + ex.Message; }
+        }
+
+        internal static string AuthorityDescription()
+        {
+            bool isServer = false, isLocal = false; string serverError = null, localError = null;
+            try { isServer = NetworkSceneManager.IsServer; } catch (Exception ex) { serverError = ex.Message; }
+            try { isLocal = NetworkSceneManager.IsLocalTest; } catch (Exception ex) { localError = ex.Message; }
+            return "IsServer=" + isServer + (serverError != null ? "(err:" + serverError + ")" : "")
+                + " IsLocalTest=" + isLocal + (localError != null ? "(err:" + localError + ")" : "");
+        }
+
         internal static string Clean(string name)
         {
             if (name == null) return "";
@@ -197,16 +253,17 @@ namespace ATTBuildingQuest
             try
             {
                 var sync = CommandSync.Instance;
-                if (sync == null) return false;
-                Diag.Log("route: sending to server: " + command);
+                Diag.Log("route: CommandSync.Instance=" + (sync == null ? "NULL (no command channel to a server)" : sync.GetType().FullName) + "; sending '" + command + "'");
+                if (sync == null) { Diag.Log("route: SEND ABORTED: CommandSync.Instance is null -- this client has no server command channel (not connected to a server?)."); return false; }
                 sync.RouteCommand(command, Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<Il2CppSystem.Action<string, string>>(new System.Action<string, string>(OnReply)));
+                Diag.Log("route: RouteCommand('" + command + "') returned without throwing; callback pending.");
                 return true;
             }
-            catch (Exception ex) { Mod.LogOnce("route: " + ex.Message); return false; }
+            catch (Exception ex) { Diag.Log("route: SEND FAILED for '" + command + "': " + ex); Mod.LogOnce("route: " + ex.Message); return false; }
         }
         private static void OnReply(string name, string result)
         {
-            Diag.Log("route: server replied (" + (name ?? "?") + "): " + (string.IsNullOrEmpty(result) ? "(empty)" : result));
+            Diag.Log("route: CALLBACK from server (name='" + (name ?? "(null)") + "'): '" + (string.IsNullOrEmpty(result) ? "(empty)" : result) + "'");
             ConsoleHook.NoteServerReply(result);
         }
     }

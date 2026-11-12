@@ -111,6 +111,7 @@ namespace ATTBuilding
                     break;
                 case CommandKind.List: Spawner.ListMatching(cmd.Text, Print); break;
                 case CommandKind.Spawned: Print(TrackedRegistry.Count + " console-spawned object(s) tracked for build mode."); break;
+                case CommandKind.ServerPing: Spawner.PingServer(Print); break;
                 case CommandKind.Clear: Print(Spawner.ClearSpawned() + " console-spawned object(s) removed."); break;
                 case CommandKind.Unknown: Print(cmd.Error); break;
             }
@@ -177,9 +178,32 @@ namespace ATTBuilding
         }
 
         // Server replies to routed spawn requests arrive asynchronously
-        // (AdminConsole pattern from the reference code).
-        internal static void NoteServerReply(string result) { if (!string.IsNullOrEmpty(result)) Print("(server) " + result); }
-        internal static void BeginWait(Action<string> print) { _print = print; _waitingUntil = UnityEngine.Time.time + 10f; }
+        // (AdminConsole pattern from the reference code). Keep the exact
+        // pending command so a timeout can say WHAT was lost and a reply
+        // can be matched to it in debug.log on both ends.
+        private static string _pendingCommand;
+        private static float _pendingStartedAt = -1f;
+
+        internal static void NoteServerReply(string result)
+        {
+            float waited = _pendingStartedAt >= 0f ? UnityEngine.Time.time - _pendingStartedAt : -1f;
+            Diag.FileOnly("route: reply matched pending='" + (_pendingCommand ?? "(none)") + "' waited=" + (waited >= 0f ? waited.ToString("F2") + "s" : "?") + " result='" + (result ?? "(null)") + "'");
+            _waitingUntil = -1f;
+            _pendingCommand = null;
+            _pendingStartedAt = -1f;
+            if (!string.IsNullOrEmpty(result)) Print("(server) " + result);
+        }
+
+        internal static void BeginWait(Action<string> print) { BeginWait(print, null); }
+
+        internal static void BeginWait(Action<string> print, string command)
+        {
+            _print = print;
+            _pendingCommand = command;
+            _pendingStartedAt = UnityEngine.Time.time;
+            _waitingUntil = UnityEngine.Time.time + 10f;
+            Diag.Log("route: waiting up to 10s for server reply to '" + (command ?? "?") + "'");
+        }
 
         private static object _lastField;
 
@@ -381,7 +405,15 @@ namespace ATTBuilding
             ProcessRefocus();
             if (_waitingUntil < 0f || UnityEngine.Time.time < _waitingUntil) return;
             _waitingUntil = -1f;
-            if (_print != null) _print("No answer from the server. It may not run ATTBuilding, or you may lack spawn permission there.");
+            string pending = _pendingCommand ?? "(unknown command)";
+            _pendingCommand = null;
+            _pendingStartedAt = -1f;
+            Diag.Log("route: TIMEOUT after 10s waiting for '" + pending + "'. No callback reached this client. "
+                + "Server checks: is the PC build of ATTBuilding " + Mod.Version + " in the server's Mods folder and loaded "
+                + "('ATTBuilding " + Mod.Version + " started (PC Mono)')? Does its log/debug.log show "
+                + "'server: registering build module' followed by 'server spawn: received' (or 'server ping: received')? "
+                + "If neither line is there, the request never reached a registered ATTBuilding command on the server.");
+            if (_print != null) _print("No answer from the server for '" + pending + "'. The server may not run ATTBuilding (PC build " + Mod.Version + "), its 'build' module may not be registered, or you may lack spawn permission there. Type 'build ping' to test, and check the server log for 'server spawn: received'.");
         }
     }
 

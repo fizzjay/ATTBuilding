@@ -13,13 +13,16 @@ namespace ATTBuilding
     {
         private static bool _once;
 
+        [HarmonyPriority(800)]
         [HarmonyPostfix]
         private static void Postfix(bool isServer)
         {
+            Diag.FileOnly("server seam: NetworkScene.FirstInitialize(isServer=" + isServer + ") once=" + _once + " registered=" + ServerCommands.Registered);
             if (!isServer || _once) return;
             _once = true;
-            try { ServerCommands.Register(); }
-            catch (Exception ex) { Mod.Log.Error("server seam: " + ex.Message); }
+            Diag.Log("server seam: FirstInitialize(isServer=true) -- registering 'build' module now.");
+            try { ServerCommands.Register("NetworkScene.FirstInitialize"); }
+            catch (Exception ex) { Mod.Log.Error("server seam: " + ex); Diag.FileOnly("server seam exception: " + ex); }
         }
     }
 }
