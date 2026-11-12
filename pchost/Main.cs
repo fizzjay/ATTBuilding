@@ -47,7 +47,7 @@ Diag.FileOnly("server: 'build' module registers when this process becomes a serv
 
     internal static class Mod
     {
-        internal const string Version = "0.4.3";
+        internal const string Version = "0.4.4";
         internal static bool BubbleEnabled = true;
         internal static bool ConsoleEnabled = true;
         internal static bool SuppressDummy = true;

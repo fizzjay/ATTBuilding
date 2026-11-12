@@ -25,6 +25,7 @@ namespace ATTBuildingQuest
                 var harmony = new HarmonyLib.Harmony("attbuilding");
                 if (Mod.ConsoleEnabled) Mod.Log.Msg(ConsoleHook.Apply(harmony)); else Mod.Log.Msg("console: OFF (pref) -- hooks skipped.");
                 if (Mod.BubbleEnabled) Mod.Log.Msg(Bubble.Apply(harmony)); else Mod.Log.Msg("bubble: OFF (pref) -- quick-access bubble skipped. Set BubbleEnabled on and restart to bisect a crash.");
+                Mod.Log.Msg(BuildNet.Install(harmony));
 
                 _running = true;
                 Mod.Log.Msg("ATTBuilding " + Mod.Version + " started (Quest IL2CPP). Open the wrist menu and pick the 'ATT Building Console' bubble, then: build help");
@@ -48,7 +49,7 @@ namespace ATTBuildingQuest
 
     internal static class Mod
     {
-        internal const string Version = "0.4.3";
+        internal const string Version = "0.4.4";
         internal static bool BubbleEnabled = true;
         internal static bool ConsoleEnabled = true;
         internal static bool SuppressDummy = true;

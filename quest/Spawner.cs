@@ -70,9 +70,11 @@ namespace ATTBuildingQuest
                 string player = LocalPlayerToken();
                 if (player == null) { Diag.Log("spawn: cannot route: local player token unavailable (not spawned in yet)."); print("Not spawned yet."); return; }
                 string command = "build spawn " + player + " " + prefab.Hash;
-                if (NetRoute.Send(command, print))
-                { print("Asked the server to spawn " + Clean(prefab.name) + " x" + count + " ..."); ConsoleHook.BeginWait(print, command); }
-                else print("This client cannot spawn here (not the host/server) and no server command channel is open. Play local/host, or the server needs ATTBuilding (PC build).");
+                if (BuildNet.SendSpawn(prefab.Hash, count))
+                { print("Asked the server (direct ATTBuilding channel) to spawn " + Clean(prefab.name) + " x" + count + " ..."); ConsoleHook.BeginWait(print, command + " [direct]"); }
+                else if (NetRoute.Send(command, print))
+                { print("Asked the server (Alta console route) to spawn " + Clean(prefab.name) + " x" + count + " ..."); ConsoleHook.BeginWait(print, command); }
+                else print("This client cannot spawn here (not the host/server) and no server channel is open. Play local/host, or the server needs ATTBuilding (PC build).");
                 return;
             }
             Vector3 at; Quaternion rot;
@@ -92,8 +94,9 @@ namespace ATTBuildingQuest
             string player = LocalPlayerToken();
             if (player == null) { print("Not spawned yet."); return; }
             string command = "build ping " + player;
-            if (NetRoute.Send(command, print)) { print("Pinging the server for ATTBuilding (this client is " + Mod.Version + ") ..."); ConsoleHook.BeginWait(print, command); }
-            else print("Could not ping: no server command channel (CommandSync) is open here.");
+            if (BuildNet.SendPing()) { print("Pinging the server for ATTBuilding on the direct channel (this client is " + Mod.Version + ") ..."); ConsoleHook.BeginWait(print, command + " [direct]"); }
+            else if (NetRoute.Send(command, print)) { print("Pinging the server for ATTBuilding via the Alta console route (this client is " + Mod.Version + ") ..."); ConsoleHook.BeginWait(print, command); }
+            else print("Could not ping: no server channel is open here (not connected, or the connection was not captured).");
         }
 
         // Authoritative spawn + build-mode registration. Also used by the PC

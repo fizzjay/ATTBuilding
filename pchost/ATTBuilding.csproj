@@ -58,6 +58,7 @@
     <Compile Include="..\shared\TrackedRegistry.cs"><Link>TrackedRegistry.cs</Link></Compile>
     <Compile Include="..\shared\VectorSnap.cs"><Link>VectorSnap.cs</Link></Compile>
     <Compile Include="Bubble.cs" />
+    <Compile Include="BuildNet.cs" />
     <Compile Include="BuildMode.cs" />
     <Compile Include="ConsoleHook.cs" />
     <Compile Include="Diag.cs" />

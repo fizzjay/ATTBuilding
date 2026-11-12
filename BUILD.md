@@ -256,3 +256,23 @@ times out too, the server either has no ATTBuilding PC build loaded
 (check its Melon log for `ATTBuilding 0.4.3 started (PC Mono)`) or the
 module never registered (its `debug.log` lacks `server: registering
 'build' module` / shows the "ZERO build commands" dump line).
+
+## 0.4.4 direct channel (the lever was the clue)
+
+The game's own `RuntimeConsole` source shows `RunCommandOnServer` is just
+`CommandSync.RouteCommand(command, null)` -- the **dev console's** routing,
+which the server only honours for developer/admin-flagged players. The
+0.4.3 logs proved the consequence: server module registered, client routed,
+handler never fired, no reply. (The console's Run-on-Client/Server lever is
+therefore irrelevant to this mod -- our prefix intercepts input first; leave
+it on Client.)
+
+Spawn/ping now ride ATTBuilding's own message-139 wire, modelled on
+ArmorRestored's message-137 channel: the client captures its server
+connection at `JoinServerPipeline.ConnectionApprovedByServer`, the server
+installs a handler at `ServerHandler.ConnectionCreated`, identifies the
+requester from `connection.Player` (no roles, no name matching), spawns via
+the shared `ServerCommands.SpawnForPlayer`, and replies on the same message.
+The Alta route remains as a logged fallback. Watch for `buildnet:` lines on
+both ends; a server without the new PC build simply never answers message
+139, which the client timeout now says explicitly.

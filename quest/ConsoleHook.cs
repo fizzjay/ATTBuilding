@@ -414,7 +414,7 @@ namespace ATTBuildingQuest
             Diag.Log("route: TIMEOUT after 10s waiting for '" + pending + "'. No callback reached this client. "
                 + "Server checks: is the PC build of ATTBuilding " + Mod.Version + " in the server's Mods folder and loaded "
                 + "('ATTBuilding " + Mod.Version + " started (PC Mono)')? Does its log/debug.log show "
-                + "'server: registering build module' followed by 'server spawn: received' (or 'server ping: received')? "
+                + "'server: registering build module', 'buildnet: SPAWN request' or 'server spawn: received'? "
                 + "If neither line is there, the request never reached a registered ATTBuilding command on the server.");
             if (_print != null) _print("No answer from the server for '" + pending + "'. The server may not run ATTBuilding (PC build " + Mod.Version + "), its 'build' module may not be registered, or you may lack spawn permission there. Type 'build ping' to test, and check the server log for 'server spawn: received'.");
         }

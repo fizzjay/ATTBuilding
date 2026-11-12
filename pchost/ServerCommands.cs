@@ -168,15 +168,23 @@ namespace ATTBuilding
                 + " authority[" + Spawner.AuthorityDescription() + "] players[" + DescribePlayers() + "]");
             uint hash;
             if (!uint.TryParse(prefabHash, out hash)) { Diag.Log("server spawn: bad prefab hash '" + prefabHash + "'"); return "bad prefab hash '" + prefabHash + "'"; }
-            var prefab = PrefabManager.GetPrefab(hash);
-            if (prefab == null) { Diag.Log("server spawn: PrefabManager.GetPrefab(" + hash + ") returned null on the server."); return "no prefab with hash " + hash + " on the server"; }
-            Diag.Log("server spawn: prefab hash " + hash + " -> '" + prefab.name + "'");
             string why;
             var target = FindPlayer(player, out why);
             if (target == null) { Diag.Log("server spawn: player NOT matched: " + why); return why; }
             Diag.Log("server spawn: player matched '" + target.UserInfo.Username + "'#" + target.UserInfo.Identifier);
+            return SpawnForPlayer(target, hash);
+        }
+
+        // Spawn one prefab in front of an already-identified player. Shared
+        // by the Alta.Console command above and the direct BuildNet channel
+        // (which identifies the player from their connection instead).
+        internal static string SpawnForPlayer(Player target, uint hash)
+        {
+            var prefab = PrefabManager.GetPrefab(hash);
+            if (prefab == null) { Diag.Log("server spawn: PrefabManager.GetPrefab(" + hash + ") returned null on the server."); return "no prefab with hash " + hash + " on the server"; }
+            Diag.Log("server spawn: prefab hash " + hash + " -> '" + prefab.name + "' for '" + target.UserInfo.Username + "'");
             var controller = target.PlayerController;
-            if (controller == null || controller.Head == null) { Diag.Log("server spawn: player '" + target.UserInfo.Username + "' has no PlayerController/Head yet (not spawned in)."); return player + " is not spawned in"; }
+            if (controller == null || controller.Head == null) { Diag.Log("server spawn: player '" + target.UserInfo.Username + "' has no PlayerController/Head yet (not spawned in)."); return target.UserInfo.Username + " is not spawned in"; }
             Vector3 forward = controller.Head.forward; forward.y = 0f;
             if (forward.sqrMagnitude < 0.001f) forward = Vector3.forward;
             forward.Normalize();

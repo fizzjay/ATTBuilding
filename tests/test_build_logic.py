@@ -112,6 +112,19 @@ def test_reported_build_errors_stay_fixed():
         assert "AuthorityDescription" in spawner and "LocalPlayerToken" in spawner
         hook = read(f"{proj}/ConsoleHook.cs")
         assert "_pendingCommand" in hook and "route: TIMEOUT after 10s" in hook
+    # Direct channel (0.4.4): Alta's RouteCommand is the DEV console's
+    # routing (RuntimeConsole.RunCommandOnServer -> RouteCommand(command,
+    # null)) and dies for players without a server role, so spawn/ping ride
+    # our own message-139 wire (ArmorRestored's message-137 pattern).
+    for proj in ("pchost", "quest"):
+        net = read(f"{proj}/BuildNet.cs")
+        assert "139" in net and "SendSpawn" in net and "SendPing" in net
+        assert "ConnectionApprovedByServer" in net
+        spawner = read(f"{proj}/Spawner.cs")
+        assert "BuildNet.SendSpawn" in spawner and "BuildNet.SendPing" in spawner
+        assert spawner.index("BuildNet.SendSpawn") < spawner.index("NetRoute.Send")  # direct first, Alta fallback
+    assert "BuildNet.cs" in read("pchost/ATTBuilding.csproj") and "BuildNet.cs" in read("quest/ATTBuilding.csproj")
+    assert "SpawnForPlayer" in read("pchost/ServerCommands.cs") and "BuildNet.Install" in read("quest/Main.cs")
     # Console flight fix: it must be a locked panel, not a loose
     # zero-gravity physics body. It only unlocks while a local hand is
     # actually interacting with its Pickup, then freezes on release.
