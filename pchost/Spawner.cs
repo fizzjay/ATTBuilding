@@ -170,6 +170,65 @@ namespace ATTBuilding
             return done;
         }
 
+// ---- Remote spawns (asked the server via BuildNet) -----------------
+        // The server replies with the network Identifier of each entity it
+        // spawned for us. Those entities stream in asynchronously, so keep
+        // them pending and adopt them as they appear: only then do 'build
+        // spawned', 'build clear' and build-mode grabbing know about them
+        // (before 0.4.7 the client tracked nothing and reported 0 spawned).
+        private static readonly System.Collections.Generic.HashSet<uint> _remoteIds = new System.Collections.Generic.HashSet<uint>();
+        private static readonly System.Collections.Generic.Dictionary<uint, float> _pendingRemote = new System.Collections.Generic.Dictionary<uint, float>();
+        private static readonly System.Collections.Generic.Dictionary<int, uint> _remoteIdByInstance = new System.Collections.Generic.Dictionary<int, uint>();
+        private static float _nextTrackScan;
+
+        internal static int PendingRemoteCount { get { return _pendingRemote.Count; } }
+
+        internal static void TrackRemote(uint entityId)
+        {
+            if (entityId == 0 || _remoteIds.Contains(entityId)) return;
+            _remoteIds.Add(entityId);
+            _pendingRemote[entityId] = UnityEngine.Time.time + 25f;
+            Diag.Log("track: waiting for remote spawn entity " + entityId + " to stream in...");
+        }
+
+        internal static void TickRemoteTracking()
+        {
+            if (_pendingRemote.Count == 0) return;
+            float now = UnityEngine.Time.time;
+            if (now < _nextTrackScan) return;
+            _nextTrackScan = now + 0.25f;
+            var arrived = new System.Collections.Generic.List<uint>();
+            var expired = new System.Collections.Generic.List<uint>();
+            foreach (var pair in _pendingRemote) { if (now > pair.Value) expired.Add(pair.Key); }
+            foreach (uint id in expired) { _pendingRemote.Remove(id); Diag.Log("track: remote spawn entity " + id + " never streamed in (gave up after 25s)."); }
+            if (_pendingRemote.Count == 0) return;
+            try
+            {
+                foreach (var entity in UnityEngine.Object.FindObjectsOfType<NetworkEntity>())
+                {
+                    if (entity == null) continue;
+                    uint id = (uint)entity.Identifier;
+                    if (id == 0 || !_pendingRemote.ContainsKey(id)) continue;
+                    _pendingRemote.Remove(id);
+                    arrived.Add(id);
+                    Track(entity);
+                    _remoteIdByInstance[entity.gameObject.GetInstanceID()] = id;
+                    var pk = entity.gameObject.GetComponentInChildren<Pickup>();
+                    if (pk != null) _remoteIdByInstance[pk.gameObject.GetInstanceID()] = id;
+                    Diag.Log("track: adopted remote spawn '" + entity.gameObject.name + "' entity=" + id + " (tracked total " + TrackedRegistry.Count + ").");
+                    if (BuildState.BuildMode) BuildMode.EnsureGrabbable(entity.gameObject);
+                }
+            }
+            catch (Exception ex) { Diag.FileOnly("track scan: " + ex.Message); }
+        }
+
+        internal static string TrackedDescription()
+        {
+            int n = TrackedRegistry.Count;
+            return n + " console-spawned object(s) tracked for build mode"
+                + (_pendingRemote.Count > 0 ? " (+" + _pendingRemote.Count + " still arriving from the server)" : "") + ".";
+        }
+
         internal static void Track(NetworkEntity entity)
         {
             if (entity == null) return;
@@ -179,11 +238,12 @@ namespace ATTBuilding
             if (BuildState.BuildMode) BuildMode.EnsureGrabbable(entity.gameObject);
         }
 
-        internal static int ClearSpawned()
+        internal static void ClearSpawned(Action<string> print)
         {
-            int removed = 0;
+            int local = 0;
             foreach (int id in TrackedRegistry.Snapshot())
             {
+                if (_remoteIdByInstance.ContainsKey(id)) continue; // server-side entity: removed below via BuildNet
                 var go = FindByInstanceId(id);
                 if (go == null) continue;
                 try
@@ -192,12 +252,28 @@ namespace ATTBuilding
                     var entity = prefab == null ? null : prefab.Entity;
                     if (HasAuthority() && entity != null && entity.Spawner != null) entity.Spawner.Destroy(entity, false);
                     else UnityEngine.Object.Destroy(go);
-                    removed++;
+                    local++;
                 }
                 catch (Exception ex) { Mod.LogOnce("clear: " + ex.Message); }
+                TrackedRegistry.Remove(id);
+            }
+            if (_remoteIds.Count > 0)
+            {
+                var ids = new uint[_remoteIds.Count]; _remoteIds.CopyTo(ids);
+                int asking = ids.Length;
+                _remoteIds.Clear(); _pendingRemote.Clear(); _remoteIdByInstance.Clear();
+                foreach (int id in TrackedRegistry.Snapshot()) TrackedRegistry.Remove(id);
+                TrackedRegistry.Clear();
+                if (BuildNet.SendDespawn(ids))
+                {
+                    print(local + " removed here; asked the server to remove your " + asking + " spawned object(s)...");
+                    ConsoleHook.BeginWait(print, "build clear [direct]");
+                }
+                else print(local + " removed here; could not reach the server to remove " + asking + " remote object(s) (they may still be in the world).");
+                return;
             }
             TrackedRegistry.Clear();
-            return removed;
+            print(local + " console-spawned object(s) removed.");
         }
 
         internal static bool HasAuthority()

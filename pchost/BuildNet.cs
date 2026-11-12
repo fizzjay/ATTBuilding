@@ -29,6 +29,7 @@ namespace ATTBuilding
         private const byte KindSpawn = 1;
         private const byte KindReply = 2;
         private const byte KindPing = 3;
+        private const byte KindDespawn = 6;
 
         internal static Connection ToServer;
         private static int _nextRequest = 1;
@@ -79,6 +80,26 @@ namespace ATTBuilding
             catch (Exception ex) { Diag.Log("buildnet: ping send FAILED: " + ex); return false; }
         }
 
+        internal static bool SendDespawn(uint[] entityIds)
+        {
+            var c = ToServer;
+            if (c == null || c.IsDisposed) { Diag.Log("buildnet: cannot send despawn: no live server connection captured yet."); return false; }
+            int req = _nextRequest++;
+            try
+            {
+                c.Send(null, Message, delegate(Connection conn, Stream s)
+                {
+                    byte kind = KindDespawn; s.SerializeByte(ref kind);
+                    int r = req; s.SerializeInteger(ref r);
+                    int n = entityIds == null ? 0 : entityIds.Length; s.SerializeInteger(ref n);
+                    if (entityIds != null) foreach (uint id in entityIds) { uint u = id; s.SerializeBits(ref u, 32); }
+                });
+                Diag.Log("buildnet: despawn request #" + req + " sent (" + (entityIds == null ? 0 : entityIds.Length) + " entity id(s)).");
+                return true;
+            }
+            catch (Exception ex) { Diag.Log("buildnet: despawn send FAILED: " + ex); return false; }
+        }
+
         private static void ClientRead(Connection connection, Stream s)
         {
             try
@@ -90,6 +111,16 @@ namespace ATTBuilding
                 string text = null; s.SerializeString(ref text, (Stream.StringEncoding)1);
                 Diag.Log("buildnet: REPLY #" + req + " ok=" + (ok != 0) + ": '" + (text ?? "") + "'");
                 ConsoleHook.NoteServerReply((ok != 0 ? "" : "FAILED: ") + (text ?? ""));
+                // Trailing spawned-entity identifiers (0.4.7+ servers): so this
+                // client can track/grab/clear what it asked for. Guarded: an
+                // older server simply has nothing more in the stream.
+                try
+                {
+                    int n = 0; s.SerializeInteger(ref n);
+                    for (int i = 0; i < n && i < 40; i++) { uint id = 0; s.SerializeBits(ref id, 32); if (id != 0) Spawner.TrackRemote(id); }
+                    if (n > 0) Diag.Log("buildnet: reply carried " + n + " spawned entity id(s) to track.");
+                }
+                catch { }
             }
             catch (Exception ex) { Diag.Log("buildnet: reading reply failed: " + ex); }
         }
@@ -115,6 +146,19 @@ namespace ATTBuilding
                     Reply(connection, req0, true, "ATTBuilding server " + Mod.Version + " is HERE on the direct channel (Alta 'build' module registered=" + ServerCommands.Registered + "). Spawn away.");
                     return;
                 }
+                if (kind == KindDespawn)
+                {
+                    int reqC = 0; s.SerializeInteger(ref reqC);
+                    int nC = 0; s.SerializeInteger(ref nC);
+                    var idsC = new uint[Math.Max(0, Math.Min(nC, 200))];
+                    for (int i = 0; i < idsC.Length; i++) { uint u = 0; s.SerializeBits(ref u, 32); idsC[i] = u; }
+                    var whoC = connection.Player as Player;
+                    Diag.Log("buildnet: DESPAWN #" + reqC + " from " + (whoC == null || whoC.UserInfo == null ? "?" : whoC.UserInfo.Username) + ": " + idsC.Length + " id(s)");
+                    if (whoC == null) { Reply(connection, reqC, false, "server could not identify your player from your connection yet.", null); return; }
+                    int removedC = ServerCommands.DespawnForPlayer(whoC, idsC);
+                    Reply(connection, reqC, true, "Removed " + removedC + " of your spawned object(s).", null);
+                    return;
+                }
                 if (kind != KindSpawn) { Diag.FileOnly("buildnet: server got unknown kind " + kind + " from connection " + connection.Identifier + "; ignored."); return; }
                 int req = 0; s.SerializeInteger(ref req);
                 uint hash = 0; s.SerializeBits(ref hash, 32);
@@ -125,19 +169,22 @@ namespace ATTBuilding
                     + " player=" + (target == null || target.UserInfo == null ? "(unknown)" : "'" + target.UserInfo.Username + "'#" + target.UserInfo.Identifier)
                     + " hash=" + hash + " count=" + count);
                 if (target == null) { Reply(connection, req, false, "server could not identify your player from your connection yet -- try again once fully spawned in."); return; }
-                int done = 0; string last = null;
+                int done = 0; string last = null; var ids = new System.Collections.Generic.List<uint>();
                 for (int i = 0; i < count; i++)
                 {
-                    last = ServerCommands.SpawnForPlayer(target, hash);
-                    if (last != null && last.StartsWith("Spawned")) done++;
+                    uint entityId;
+                    last = ServerCommands.SpawnForPlayer(target, hash, out entityId);
+                    if (last != null && last.StartsWith("Spawned")) { done++; if (entityId != 0) ids.Add(entityId); }
                     else break;
                 }
-                Reply(connection, req, done > 0, done == count ? last : (done > 0 ? "Spawned " + done + "/" + count + ". " + last : last));
+                Reply(connection, req, done > 0, done == count ? last : (done > 0 ? "Spawned " + done + "/" + count + ". " + last : last), ids);
             }
             catch (Exception ex) { Diag.Log("buildnet: server read FAILED: " + ex); }
         }
 
-        private static void Reply(Connection connection, int req, bool ok, string text)
+        private static void Reply(Connection connection, int req, bool ok, string text) { Reply(connection, req, ok, text, null); }
+
+        private static void Reply(Connection connection, int req, bool ok, string text, System.Collections.Generic.List<uint> entityIds)
         {
             try
             {
@@ -147,6 +194,8 @@ namespace ATTBuilding
                     int r = req; s.SerializeInteger(ref r);
                     byte o = (byte)(ok ? 1 : 0); s.SerializeByte(ref o);
                     string tx = text ?? ""; s.SerializeString(ref tx, (Stream.StringEncoding)1);
+                    int n = entityIds == null ? 0 : entityIds.Count; s.SerializeInteger(ref n);
+                    if (entityIds != null) foreach (uint id in entityIds) { uint u = id; s.SerializeBits(ref u, 32); }
                 });
                 Diag.Log("buildnet: reply #" + req + " sent (ok=" + ok + "): '" + (text ?? "") + "'");
             }

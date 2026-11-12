@@ -37,15 +37,83 @@ namespace ATTBuildingQuest
             if (go == null) return;
             try
             {
-                if (go.GetComponentInChildren<Pickup>() != null) return; // already an item
-                var body = go.GetComponent<Rigidbody>();
-                if (body == null) body = go.AddComponent<Rigidbody>();
-                // Pickup.CheckInteractAllowedAndReplace requires a Rigidbody;
-                // Pickup.Interact makes it non-kinematic and joint-grabs it.
-                var added = go.AddComponent(Il2CppType.Of<Pickup>()); if (added == null) throw new InvalidOperationException("AddComponent<Pickup> returned null");
-                Mod.Log.Msg("build mode: added Pickup to " + go.name + " (no grab points: free-grab fallback).");
+                var pickup = go.GetComponentInChildren<Pickup>();
+                bool added = false;
+                if (pickup == null)
+                {
+                    // Prefab is not an item at all (e.g. stations like the
+                    // Anvil): lend it a Rigidbody + Pickup. A runtime-added
+                    // Pickup starts with its [GetComponent] fields EMPTY, so
+                    // without the fixup below CheckInteractAllowed refuses
+                    // every grab (that was 'cannot pick up the anvils').
+                    var body0 = go.GetComponent<Rigidbody>();
+                    if (body0 == null) go.AddComponent<Rigidbody>();
+                    var added = go.AddComponent(Il2CppType.Of<Pickup>()); pickup = added == null ? null : added.TryCast<Pickup>(); if (pickup == null) throw new InvalidOperationException("AddComponent<Pickup> returned null");
+                    added = true;
+                }
+                FixupPickupFields(go, pickup);
+                int points = 0;
+                try { points = pickup.GrabPoints == null ? 0 : pickup.GrabPoints.Length; } catch { }
+                if (points == 0) InstallSurfaceGrabPoint(go, pickup);
+                try { points = pickup.GrabPoints == null ? 0 : pickup.GrabPoints.Length; } catch { }
+                Diag.Log("buildmode: grabbable '" + go.name + "': pickup " + (added ? "ADDED" : "already present") + ", grabPoints=" + points + " (grab it like an item).");
             }
-            catch (Exception ex) { Mod.LogOnce("build mode grabbable: " + ex.Message); }
+            catch (Exception ex) { Diag.Log("buildmode: grabbable fixup FAILED for '" + go.name + "': " + ex.Message); Mod.LogOnce("build mode grabbable: " + ex.Message); }
+        }
+
+        // Fill the fields the editor normally injects ([GetComponent] /
+        // [GetComponentsInChildren]) so the game's own checks pass:
+        // CheckInteractAllowedAndReplace requires the rigidbody field.
+        private static void FixupPickupFields(GameObject go, Pickup pickup)
+        {
+            var body = go.GetComponent<Rigidbody>();
+            if (body == null) body = pickup.gameObject.GetComponent<Rigidbody>();
+            if (body != null) ConsoleHook.SetMember(pickup, "rigidbody", body);
+            try { ConsoleHook.SetMember(pickup, "childrenColliders", go.GetComponentsInChildren<Collider>()); } catch { }
+            try { var nrb = go.GetComponent<NetworkRigidbody>(); if (nrb != null) ConsoleHook.SetMember(pickup, "networkRigidbody", nrb); } catch { }
+        }
+
+        // 'Grab the surface' (the ArmorSurfaceGrip idea, using the game's own
+        // GrabPoint surface mode instead of Harmony): one GrabPoint whose
+        // position is the object's bounds centre and whose poleForward is the
+        // bounds extents -- CheckScore clamps the hand onto that box, so you
+        // can grab the object anywhere on its surface, angle ignored.
+        private static void InstallSurfaceGrabPoint(GameObject go, Pickup pickup)
+        {
+            Bounds bounds = LocalBounds(go, pickup.transform);
+            var gp = new GrabPoint();
+            gp.rotationMode = RotationMode.Surface;
+            ConsoleHook.SetMember(gp, "position", bounds.center);
+            var ext = bounds.extents;
+            ext = new Vector3(Mathf.Max(ext.x, 0.03f), Mathf.Max(ext.y, 0.03f), Mathf.Max(ext.z, 0.03f));
+            ConsoleHook.SetMember(gp, "poleForward", ext);
+            ConsoleHook.SetMember(gp, "isIgnoringAngle", true);
+            ConsoleHook.SetMember(pickup, "grabPoints", new GrabPoint[] { gp });
+            Diag.FileOnly("buildmode: surface grab point on '" + go.name + "' centre=" + bounds.center + " extents=" + ext);
+        }
+
+        private static Bounds LocalBounds(GameObject go, Transform local)
+        {
+            Bounds world = new Bounds(); bool has = false;
+            foreach (var c in go.GetComponentsInChildren<Collider>())
+            {
+                if (c == null) continue;
+                if (!has) { world = c.bounds; has = true; } else world.Encapsulate(c.bounds);
+            }
+            if (!has)
+            {
+                foreach (var r in go.GetComponentsInChildren<Renderer>())
+                {
+                    if (r == null) continue;
+                    if (!has) { world = r.bounds; has = true; } else world.Encapsulate(r.bounds);
+                }
+            }
+            if (!has) return new Bounds(Vector3.zero, new Vector3(0.4f, 0.4f, 0.4f));
+            Vector3 center = local.InverseTransformPoint(world.center);
+            Vector3 size = local.InverseTransformVector(world.size);
+            size = new Vector3(Mathf.Abs(size.x), Mathf.Abs(size.y), Mathf.Abs(size.z));
+            if (size.sqrMagnitude < 0.0001f) size = new Vector3(0.4f, 0.4f, 0.4f);
+            return new Bounds(center, size);
         }
 
         internal static void Tick()

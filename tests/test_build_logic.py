@@ -144,6 +144,22 @@ def test_reported_build_errors_stay_fixed():
         spawner = read(f"{proj}/Spawner.cs")
         assert "PrefabNicks.TryGet" in spawner and "PrefabNicks.Set" in spawner and "PrefabNicks.Delete" in spawner
         assert spawner.index("PrefabNicks.TryGet") < spawner.index("partials == 1")  # nick beats substring ambiguity
+    # Remote-spawn tracking + grab fix + console grab ball (0.4.7): the
+    # server returns spawned entity Identifiers in the reply; the client
+    # adopts those entities as they stream in (else spawned/clear/build
+    # mode saw nothing and reported '0 spawned'); clear asks the server to
+    # destroy only the requester's own; EnsureGrabbable does the full
+    # Pickup field fixup plus a native surface GrabPoint (ArmorSurfaceGrip
+    # idea); the console gets a grab ball child.
+    assert "out uint entityId" in read("pchost/ServerCommands.cs") and "DespawnForPlayer" in read("pchost/ServerCommands.cs")
+    for proj in ("pchost", "quest"):
+        net = read(f"{proj}/BuildNet.cs")
+        assert "SendDespawn" in net and "TrackRemote" in net
+        spawner = read(f"{proj}/Spawner.cs")
+        assert "TickRemoteTracking" in spawner and "_pendingRemote" in spawner
+        mode = read(f"{proj}/BuildMode.cs")
+        assert "RotationMode.Surface" in mode and "FixupPickupFields" in mode and "childrenColliders" in mode
+        assert "ATTBuildingGrabHandle" in read(f"{proj}/ConsoleHook.cs")
     # Console flight fix: it must be a locked panel, not a loose
     # zero-gravity physics body. It only unlocks while a local hand is
     # actually interacting with its Pickup, then freezes on release.

@@ -26,6 +26,7 @@ namespace ATTBuildingQuest
         private const uint KindSpawn = 1;
         private const uint KindReply = 2;
         private const uint KindPing = 3;
+        private const uint KindDespawn = 6;
 
         internal static Connection ToServer;
         private static int _nextRequest = 1;
@@ -90,6 +91,19 @@ namespace ATTBuildingQuest
             }, req);
         }
 
+        internal static bool SendDespawn(uint[] entityIds)
+        {
+            int req = _nextRequest++;
+            var ids = entityIds ?? new uint[0];
+            return Send("despawn #" + req, delegate(Stream s)
+            {
+                uint kind = KindDespawn; s.SerializeBits(ref kind, 8);
+                int r = req; s.SerializeInteger(ref r);
+                int n = ids.Length; s.SerializeInteger(ref n);
+                foreach (uint id in ids) { uint u = id; s.SerializeBits(ref u, 32); }
+            }, req);
+        }
+
         private static bool Send(string what, Action<Stream> body, int req)
         {
             var c = ToServer;
@@ -119,6 +133,15 @@ namespace ATTBuildingQuest
                 string text = null; s.SerializeString(ref text, (Stream.StringEncoding)1);
                 Diag.Log("buildnet: REPLY #" + req + " ok=" + (ok != 0) + ": '" + (text ?? "") + "'");
                 ConsoleHook.NoteServerReply((ok != 0 ? "" : "FAILED: ") + (text ?? ""));
+                // Trailing spawned-entity identifiers (0.4.7+ servers): track
+                // them locally so build mode / spawned / clear see OUR spawns.
+                try
+                {
+                    int n = 0; s.SerializeInteger(ref n);
+                    for (int i = 0; i < n && i < 40; i++) { uint id = 0; s.SerializeBits(ref id, 32); if (id != 0) Spawner.TrackRemote(id); }
+                    if (n > 0) Diag.Log("buildnet: reply carried " + n + " spawned entity id(s) to track.");
+                }
+                catch { }
             }
             catch (Exception ex) { Diag.Log("buildnet: reading reply failed: " + ex); }
         }

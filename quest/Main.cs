@@ -44,13 +44,14 @@ namespace ATTBuildingQuest
             }
             try { Bubble.Tick(); } catch (Exception e) { Mod.LogOnce("bubble: " + e.Message); }
             try { BuildMode.Tick(); } catch (Exception e) { Mod.LogOnce("buildmode: " + e.Message); }
+            try { Spawner.TickRemoteTracking(); } catch { }
             try { ConsoleHook.TickTimeout(); } catch { }
         }
     }
 
     internal static class Mod
     {
-        internal const string Version = "0.4.6";
+        internal const string Version = "0.4.7";
         internal static bool BubbleEnabled = true;
         internal static bool ConsoleEnabled = true;
         internal static bool SuppressDummy = true;

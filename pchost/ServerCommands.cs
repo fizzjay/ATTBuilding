@@ -173,14 +173,43 @@ namespace ATTBuilding
             var target = FindPlayer(player, out why);
             if (target == null) { Diag.Log("server spawn: player NOT matched: " + why); return why; }
             Diag.Log("server spawn: player matched '" + target.UserInfo.Username + "'#" + target.UserInfo.Identifier);
-            return SpawnForPlayer(target, hash);
+            uint ignored; return SpawnForPlayer(target, hash, out ignored);
+        }
+
+        // Everything the direct channel spawned, per player, so a client's
+        // 'build clear' can only ever remove ITS OWN spawns.
+        // playerIdentifier -> (entity Identifier -> entity)
+        private static readonly Dictionary<int, Dictionary<uint, NetworkEntity>> _spawnedByPlayer = new Dictionary<int, Dictionary<uint, NetworkEntity>>();
+
+        internal static int DespawnForPlayer(Player target, uint[] entityIds)
+        {
+            if (target == null || target.UserInfo == null || entityIds == null) return 0;
+            Dictionary<uint, NetworkEntity> mine;
+            if (!_spawnedByPlayer.TryGetValue(target.UserInfo.Identifier, out mine)) return 0;
+            int removed = 0;
+            foreach (uint id in entityIds)
+            {
+                NetworkEntity entity;
+                if (!mine.TryGetValue(id, out entity)) continue; // not theirs (or already gone): never touch it
+                mine.Remove(id);
+                try
+                {
+                    if (entity != null && entity.Spawner != null) { entity.Spawner.Destroy(entity, false); removed++; }
+                }
+                catch (Exception ex) { Diag.Log("server despawn: destroying entity " + id + " failed: " + ex.Message); }
+            }
+            Diag.Log("server despawn: removed " + removed + " entit(ies) for '" + target.UserInfo.Username + "' (" + mine.Count + " of theirs remain tracked).");
+            return removed;
         }
 
         // Spawn one prefab in front of an already-identified player. Shared
         // by the Alta.Console command above and the direct BuildNet channel
         // (which identifies the player from their connection instead).
-        internal static string SpawnForPlayer(Player target, uint hash)
+        // entityId is the network Identifier the requesting client can use
+        // to recognise (track / grab / clear) its own spawn when it streams in.
+        internal static string SpawnForPlayer(Player target, uint hash, out uint entityId)
         {
+            entityId = 0;
             var prefab = PrefabManager.GetPrefab(hash);
             if (prefab == null) { Diag.Log("server spawn: PrefabManager.GetPrefab(" + hash + ") returned null on the server."); return "no prefab with hash " + hash + " on the server"; }
             Diag.Log("server spawn: prefab hash " + hash + " -> '" + prefab.name + "' for '" + target.UserInfo.Username + "'");
@@ -219,8 +248,16 @@ namespace ATTBuilding
                 else chunkInfo = "GetBestContaining returned null (left as SpawnHelper set it)";
             }
             catch (Exception ex) { chunkInfo = "assign failed: " + ex.Message; }
+            try
+            {
+                entityId = (uint)entity.Identifier;
+                Dictionary<uint, NetworkEntity> mine;
+                if (!_spawnedByPlayer.TryGetValue(target.UserInfo.Identifier, out mine)) { mine = new Dictionary<uint, NetworkEntity>(); _spawnedByPlayer[target.UserInfo.Identifier] = mine; }
+                mine[entityId] = entity;
+            }
+            catch (Exception ex) { Diag.FileOnly("server spawn: entity id capture failed: " + ex.Message); }
             Diag.Log("server spawn: SUCCESS '" + prefab.name + "' -> entity '" + entity.gameObject.name + "' instance=" + entity.gameObject.GetInstanceID()
-                + " at " + entity.transform.position + " chunk=" + chunkInfo + " active=" + entity.gameObject.activeInHierarchy);
+                + " at " + entity.transform.position + " chunk=" + chunkInfo + " active=" + entity.gameObject.activeInHierarchy + " entityId=" + entityId);
             return "Spawned " + prefab.name + " for " + target.UserInfo.Username + " at " + at;
         }
 

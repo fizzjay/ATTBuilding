@@ -110,12 +110,12 @@ namespace ATTBuilding
                     Print("Live position snapping " + cmd.Flag + ".");
                     break;
                 case CommandKind.List: Spawner.ListMatching(cmd.Text, Print); break;
-                case CommandKind.Spawned: Print(TrackedRegistry.Count + " console-spawned object(s) tracked for build mode."); break;
+                case CommandKind.Spawned: Print(Spawner.TrackedDescription()); break;
                 case CommandKind.ServerPing: Spawner.PingServer(Print); break;
                 case CommandKind.Nick: Spawner.SetNick(cmd.Text, cmd.Text2, Print); break;
                 case CommandKind.DelNick: Spawner.DeleteNick(cmd.Text, Print); break;
                 case CommandKind.Nicks: Spawner.ListNicks(Print); break;
-                case CommandKind.Clear: Print(Spawner.ClearSpawned() + " console-spawned object(s) removed."); break;
+                case CommandKind.Clear: Spawner.ClearSpawned(Print); break;
                 case CommandKind.Unknown: Print(cmd.Error); break;
             }
         }
@@ -267,7 +267,39 @@ namespace ATTBuilding
             try { var body = go.GetComponent<UnityEngine.Rigidbody>(); if (body != null) SetMember(pickup, "rigidbody", body); } catch (Exception ex) { Diag.FileOnly("fixup rigidbody: " + ex.Message); }
             try { SetMember(pickup, "childrenColliders", go.GetComponentsInChildren<UnityEngine.Collider>()); } catch (Exception ex) { Diag.FileOnly("fixup colliders: " + ex.Message); }
             LockConsole(go, true);
+            AddGrabHandle(go, pickup);
             Diag.FileOnly("console movable: field fix-ups applied (rigidbody, childrenColliders); locked until grabbed.");
+        }
+
+// A fat orange ball beside the panel: grabbing IT grabs the console
+        // (same Pickup), so you never have to hunt for the panel's edge.
+        // It is just a child collider + visual: the console's existing
+        // lock/unlock logic keys off the Pickup, so nothing else changes.
+        internal static void AddGrabHandle(UnityEngine.GameObject go, Pickup pickup)
+        {
+            try
+            {
+                if (go.transform.Find("ATTBuildingGrabHandle") != null) return;
+                var ball = UnityEngine.GameObject.CreatePrimitive(UnityEngine.PrimitiveType.Sphere);
+                ball.name = "ATTBuildingGrabHandle";
+                ball.transform.SetParent(go.transform, false);
+                ball.transform.localPosition = new UnityEngine.Vector3(0.36f, 0.02f, 0f);
+                ball.transform.localScale = new UnityEngine.Vector3(0.085f, 0.085f, 0.085f);
+                var rend = ball.GetComponent<UnityEngine.MeshRenderer>();
+                if (rend != null)
+                {
+                    try
+                    {
+                        var sh = UnityEngine.Shader.Find("Township Tale/Cheap/SimpleStandard") ?? UnityEngine.Shader.Find("Standard") ?? UnityEngine.Shader.Find("Unlit/Color");
+                        if (sh != null) { var m = new UnityEngine.Material(sh); m.color = new UnityEngine.Color(1f, 0.45f, 0.1f); rend.material = m; }
+                    }
+                    catch { }
+                }
+                // The ball's collider becomes part of the grabbable surface.
+                if (pickup != null) { try { SetMember(pickup, "childrenColliders", go.GetComponentsInChildren<UnityEngine.Collider>()); } catch { } }
+                Diag.Log("console: orange grab ball added beside the panel -- grab IT to move the console.");
+            }
+            catch (Exception ex) { Diag.FileOnly("grab handle: " + ex); }
         }
 
         private static UnityEngine.GameObject _motionConsole;

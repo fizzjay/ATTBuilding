@@ -308,3 +308,23 @@ prefab name may be multi-word (`build nick weapon rack wall rack`); the
 nickname is always the last word, one token, never a pure number, and may
 not shadow a real prefab name. `build nicks` lists them. The 0.4.5
 chunk-assignment fix for invisible spawns is unchanged.
+
+## 0.4.7 remote tracking, real grabbing, console grab ball
+
+Three field fixes. (1) 'build clear' said '0 spawned': the client never
+tracked server-spawned objects -- Track() only ran in the spawning
+process. The server now returns each spawned entity's network Identifier
+in the BuildNet reply; the client adopts those entities as they stream
+in (Spawner.TickRemoteTracking), so spawned/clear/build mode see them.
+'build clear' on a remote server now sends a despawn request, and the
+server only destroys entities that same player asked it to spawn.
+(2) 'Cannot pick up the anvils': build-mode EnsureGrabbable added a bare
+Pickup with empty [GetComponent] fields (CheckInteractAllowed refuses
+those) and no grab points. It now fills rigidbody/childrenColliders/
+networkRigidbody by reflection and, when a pickup has no grab points,
+installs one native surface GrabPoint (bounds centre/extents,
+angle ignored -- the ArmorSurfaceGrip idea without Harmony). Applied
+when remote spawns are adopted and on 'build mode on'.
+(3) The console gets an orange grab ball beside the panel: a child
+sphere collider on the console's own Pickup, so grabbing it moves the
+console through the existing lock/unlock path.
