@@ -322,7 +322,10 @@ def test_grab_pipeline_instrumented():
         assert "CaptureNativeTemplate(go, pickup)" in s, f
         assert "CopyGrabPointTemplate(gp)" in s, f
         assert "ApplyNativeTemplateTo(go, pickup)" in s, f
-        assert "gp.position = p" in s, f
+        # NOT direct assignment: Mono GrabPoint lacks those member
+        # names (0.4.16 PC build error) -- reflective walker only
+        assert "gp.position" not in s, f
+        assert 'TrySetMemberWalk(gp, "position", p)' in s, f
         assert "DumpInteractorMembers(hand)" in s, f
         # never hydrate bestGrab/dockedMemory: null natively, and an
         # invented empty GrabPoint evaluates at the world origin
@@ -346,7 +349,7 @@ def test_grab_pipeline_instrumented():
         assert "pickup.enabled = true" in s, f
         assert "hasNetEntity=" in s, f
     for f in ("quest/Main.cs", "pchost/Main.cs"):
-        assert 'Version = "0.4.16"' in read(f), f
+        assert 'Version = "0.4.17"' in read(f), f
 
 
 if __name__ == "__main__":

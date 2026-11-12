@@ -187,15 +187,17 @@ namespace ATTBuildingQuest
                 // Start from a real point's design values when a native
                 // template has been captured (0.4.16) -- editor defaults
                 // we never saw may be load-bearing -- then impose the
-                // whole-mesh layout on top. (Direct assignment: these
-                // are fields on Mono, auto-properties on IL2CPP; the
-                // reflected TrySet path silently no-oped before, which
-                // left every point at the origin with default flags.)
+                // whole-mesh layout on top.
                 if (_gpTemplateValues != null) CopyGrabPointTemplate(gp);
                 gp.rotationMode = RotationMode.Surface;
-                gp.position = p;
-                gp.poleForward = ext;
-                gp.isIgnoringAngle = true;
+                // Reflective writes, NOT direct assignment: the Mono
+                // (PC) GrabPoint has no 'position'/'poleForward'/
+                // 'isIgnoringAngle' members under those names (0.4.16
+                // PC build error) -- member naming differs per target,
+                // which is why this whole file goes through walkers.
+                TrySetMemberWalk(gp, "position", p);
+                TrySetMemberWalk(gp, "poleForward", ext);
+                TrySetMemberWalk(gp, "isIgnoringAngle", true);
                 WireGrabPoint(gp, pickup);
                 made.Add(gp);
             }

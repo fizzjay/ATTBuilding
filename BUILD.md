@@ -539,3 +539,17 @@ members), `native grab template captured`, whether `grabprobe:`
 scores drop from ~827k to single digits, and whether the Anvil
 finally grabs. If it still doesn't, the `imember:` list says where
 the hand's candidate list lives for a direct read next round.
+
+## 0.4.17 PC build fix: no direct GrabPoint member assignment
+
+0.4.16 assigned `gp.position` / `gp.poleForward` / `gp.isIgnoringAngle`
+directly; the Mono (PC) `GrabPoint` has no members under those names
+(the IL2CPP interop surface differs -- the reason this codebase routes
+member writes through reflection everywhere). Those three writes now
+go through `TrySetMemberWalk` (hierarchy-walking, type-checked) like
+everything else. `gp.rotationMode` stays direct: it exists on both
+targets and the compiler did not flag it. The MSIL/AMD64 MelonLoader
+architecture warning is the known-harmless MSB3270; ignore it.
+Everything else from 0.4.16 (native template, profiles, freeze,
+bestGrab hydration ban) is unchanged -- see that section for the
+field-check list.
