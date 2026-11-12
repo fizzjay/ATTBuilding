@@ -1,5 +1,6 @@
 
 using System;
+using HarmonyLib;
 using ATTBuilding; // shared/ types (BuildState, CommandParser, TrackedRegistry, VectorSnap): sibling namespace, not visible unqualified without this
 using Il2Cpp;
 using Il2CppAlta.Networking;
@@ -56,7 +57,27 @@ namespace ATTBuildingQuest
                 try { points = pickup.GrabPoints == null ? 0 : pickup.GrabPoints.Length; } catch { }
                 if (points == 0) InstallSurfaceGrabPoint(go, pickup);
                 try { points = pickup.GrabPoints == null ? 0 : pickup.GrabPoints.Length; } catch { }
-                Diag.Log("buildmode: grabbable '" + go.name + "': pickup " + (added ? "ADDED" : "already present") + ", grabPoints=" + points + " (grab it like an item).");
+                if (added)
+                {
+                    // Awake ran at AddComponent, but a network behaviour only
+                    // becomes part of its entity in Initialize() -- which the
+                    // game calls during entity setup, long before we added
+                    // this. Run it now (guarded: if the entity refuses a
+                    // late behaviour we learn that here, not silently).
+                    try { pickup.Initialize(); Diag.Log("buildmode: Initialize() ran for added Pickup on '" + go.name + "'."); }
+                    catch (Exception iex) { Diag.Log("buildmode: Initialize() FAILED for '" + go.name + "': " + iex.Message); }
+                }
+                try
+                {
+                    Diag.Log("buildmode: grabbable '" + go.name + "': pickup " + (added ? "ADDED" : "already present")
+                        + ", grabPoints=" + points
+                        + ", entityLinked=" + (pickup.Entity != null)
+                        + ", rigidbodyField=" + (pickup.Rigidbody != null)
+                        + ", collidersSet=" + pickup.Colliders.Count
+                        + ", networkRigidbody=" + (go.GetComponent<NetworkRigidbody>() != null)
+                        + ", enabled=" + pickup.enabled + " (grab it like an item).");
+                }
+                catch (Exception lex) { Diag.Log("buildmode: grabbable '" + go.name + "': pickup " + (added ? "ADDED" : "present") + ", grabPoints=" + points + " (state dump failed: " + lex.Message + ")"); }
             }
             catch (Exception ex) { Diag.Log("buildmode: grabbable fixup FAILED for '" + go.name + "': " + ex.Message); Mod.LogOnce("build mode grabbable: " + ex.Message); }
         }
@@ -76,7 +97,13 @@ namespace ATTBuildingQuest
             if (body == null) body = pickup.gameObject.GetComponent<Rigidbody>();
             if (body != null) TrySet(pickup, "rigidbody", body);
             else Diag.Log("buildmode: NO rigidbody found for '" + go.name + "' (grabs will be refused).");
-            TrySet(pickup, "childrenColliders", go.GetComponentsInChildren<Collider>());
+            var colliders = go.GetComponentsInChildren<Collider>();
+            TrySet(pickup, "childrenColliders", colliders);
+            // Pickup.Awake copies childrenColliders into its Colliders set --
+            // but Awake ran at AddComponent, BEFORE this fixup, so the set is
+            // still empty and anything consulting it sees no colliders.
+            try { foreach (var c in colliders) { if (c != null) ConsoleHook.Call(pickup.Colliders, "Add", c); } }
+            catch (Exception cex) { Diag.FileOnly("buildmode: filling Colliders set failed: " + cex.Message); }
             try { var nrb = go.GetComponent<NetworkRigidbody>(); if (nrb != null) TrySet(pickup, "networkRigidbody", nrb); } catch { }
         }
 
@@ -168,6 +195,27 @@ namespace ATTBuildingQuest
             catch (Exception ex) { Mod.LogOnce("build mode place: " + ex.Message); }
         }
 
+
+        private static readonly System.Collections.Generic.Dictionary<string, float> _diagSeen = new System.Collections.Generic.Dictionary<string, float>();
+
+        internal static void NoteGrabCheck(Pickup pickup, string what, bool result)
+        {
+            try
+            {
+                if (pickup == null) return;
+                int id = pickup.gameObject.GetInstanceID();
+                if (!TrackedRegistry.Contains(id) && !TrackedRegistry.Contains(pickup.transform.root.gameObject.GetInstanceID())) return;
+                string key = what + ":" + id;
+                float now = UnityEngine.Time.time;
+                float last;
+                if (_diagSeen.TryGetValue(key, out last) && now - last < 1.5f) return;
+                _diagSeen[key] = now;
+                Diag.Log("grabdiag: " + what + " on '" + pickup.gameObject.name + "' -> " + result
+                    + " (interactors=" + pickup.Interactors.Count + ", docked=" + pickup.IsDocked + ", rb=" + (pickup.Rigidbody != null) + ")");
+            }
+            catch { }
+        }
+
         // The ShardClient Readout pattern: scan the local player's hands.
         private static Pickup FindHeldTracked()
         {
@@ -184,5 +232,26 @@ namespace ATTBuildingQuest
             }
             return null;
         }
+    }
+
+    [HarmonyPatch(typeof(Pickup), "AssessScore")]
+    internal static class GrabDiagAssess
+    {
+        [HarmonyPostfix]
+        private static void Postfix(Pickup __instance, bool __result) { BuildMode.NoteGrabCheck(__instance, "AssessScore", __result); }
+    }
+
+    [HarmonyPatch(typeof(Pickup), "CheckInteractAllowedAndReplace")]
+    internal static class GrabDiagAllowed
+    {
+        [HarmonyPostfix]
+        private static void Postfix(Pickup __instance, bool __result) { BuildMode.NoteGrabCheck(__instance, "CheckInteractAllowed", __result); }
+    }
+
+    [HarmonyPatch(typeof(Pickup), "Interact", new System.Type[] { typeof(Interactor) })]
+    internal static class GrabDiagInteract
+    {
+        [HarmonyPostfix]
+        private static void Postfix(Pickup __instance) { BuildMode.NoteGrabCheck(__instance, "Interact()", true); }
     }
 }
