@@ -468,3 +468,36 @@ any remaining `still null:` names, `GrabPoint owner set via '...'`,
 `whole-mesh grab ... 19 surface grab points`, and whether
 `grabdiag:` flips `interactors`/`docked` when the hand touches the
 mesh anywhere.
+
+## 0.4.15 wire GrabPoint transform, retry Awake, probe the game's scoring
+
+0.4.14 field results: property-aware hydration works (7 members filled:
+WedgeJoints, docked/undocked events, breakEvent, bestGrab, docked
+memories), 19 points installed, but still `interactors=0`,
+`docked=?`. The signature dump changed the picture:
+
+- `GrabPoint` has NO owner back-reference member -- that theory is
+  dead. But editor-authored points carry a serialized `transform`
+  member that code-created points leave null. 0.4.15 wires it
+  (`WireGrabPoint`: transform + isUsingLocal + point hydration).
+- The `add_Undocked` NRE that killed Awake was Awake touching the
+  `docked`/`undocked` event fields -- exactly what hydration now
+  pre-creates BEFORE the init step. So 0.4.15 retries the real
+  `Initialize()` after hydration + entity link: genuine Awake state
+  (docker, dockingChecker, pickupScaler -- still null, only Awake
+  makes them) beats replicating it member by member.
+- Instead of guessing further, the poller now RUNS the game's own
+  pipeline reflectively when a hand is within 0.8 m: `grabprobe:`
+  lines report `CheckInteractAllowedAndReplace` and
+  `AssessScore(interactor, out score)` verdicts (reflective Invoke
+  handles out params; Harmony on them remains forbidden -- 0.4.9).
+  The same probe runs against the reference real Pickup (`ref`) to
+  validate the harness, and `refnull:` dumps the real Pickup's null
+  members so our `still null:` list can be diffed against ground
+  truth. Poller state gains `canInteract`/`netwk`/`chan` (read
+  reflectively; compile-safe on Mono).
+
+Field-check: `Initialize() RAN` vs `still FAILED`, diff of
+`still null post-init:` vs `refnull:`, ours-vs-ref `grabprobe:`
+verdicts at close hand range, and whether `docked=` finally reads
+False.

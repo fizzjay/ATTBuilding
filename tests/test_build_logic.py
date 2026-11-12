@@ -291,11 +291,13 @@ def test_grab_pipeline_instrumented():
         # (Initialize dies at add_Undocked), so Initialize is gated on the
         # entity NOT being linked, and Awake's collection setup is
         # replicated by hydration instead
-        assert "skipping Initialize()" in s, f
+        # 0.4.15: hydration pre-creates what Awake died on, so the real
+        # Initialize() is retried (it may now complete genuine Awake state)
+        assert "Initialize() RAN" in s, f
         # 0.4.14: field-only hydration was blind on IL2CPP (native fields
         # surface as properties), so hydration walks fields AND properties
         assert "HydratePickupGraph(pickup)" in s, f
-        assert "DumpNullMembers(pickup)" in s, f
+        assert 'DumpNullMembers(pickup, "still null")' in s, f
         assert "HydratePickupFields" not in s, f
         assert "grabdiag ref:" in s, f
         # 0.4.14: whole-mesh grabbing -- many surface GrabPoints (the user
@@ -304,7 +306,14 @@ def test_grab_pipeline_instrumented():
         # game's own scoring can be invoked without Harmony
         assert "InstallSurfaceGrabPoints(go, pickup)" in s, f
         assert "whole-mesh grab" in s, f
-        assert "SetGrabPointOwner(gp, pickup)" in s, f
+        # 0.4.15: GrabPoint has no owner member (0.4.14 sig dump) -- wire
+        # its serialized transform instead, and run the game's own
+        # scoring reflectively (never Harmony on ref/out methods)
+        assert "WireGrabPoint(gp, pickup)" in s, f
+        assert "grabprobe " in s, f
+        assert "InvokeProbe(pickup, \"AssessScore\"" in s, f
+        assert "refnull" in s, f
+        assert 'SafeMember(pickup, "IsInteractable")' in s, f
         assert "DumpGrabSignatures(pickup)" in s, f
         assert "sig: " in s, f
         # ... and Pickup.Colliders (populated by Awake, which ran too early)
@@ -322,7 +331,7 @@ def test_grab_pipeline_instrumented():
         assert "pickup.enabled = true" in s, f
         assert "hasNetEntity=" in s, f
     for f in ("quest/Main.cs", "pchost/Main.cs"):
-        assert 'Version = "0.4.14"' in read(f), f
+        assert 'Version = "0.4.15"' in read(f), f
 
 
 if __name__ == "__main__":

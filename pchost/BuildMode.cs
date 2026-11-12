@@ -80,25 +80,22 @@ namespace ATTBuilding
                     }
                     catch (Exception lex) { Diag.Log("buildmode: entity link failed for '" + go.name + "': " + lex.Message); }
                     try { pickup.enabled = true; } catch { }
-                    if (pickup.Entity != null)
-                    {
-                        // The 'entity' property setter already registered
-                        // this behaviour with its NetworkEntity (0.4.12 log:
-                        // 'entity linked via property entity', and the
-                        // getter reads it back). Initialize() would only
-                        // re-run Pickup.Awake, which NREs at add_Undocked
-                        // on runtime-added components -- do NOT call it.
-                        // Awake's field setup is replicated by
-                        // FixupPickupFields + HydratePickupGraph instead.
-                        Diag.Log("buildmode: skipping Initialize() for '" + go.name + "' (entity registered via setter; Awake NREs on runtime-added Pickups).");
-                    }
-                    else
-                    {
-                        try { pickup.Initialize(); Diag.Log("buildmode: Initialize() ran for added Pickup on '" + go.name + "' (entityLinked=" + (pickup.Entity != null) + ", enabled=" + pickup.enabled + ")."); }
-                        catch (Exception iex) { Diag.Log("buildmode: Initialize() FAILED for '" + go.name + "': " + iex.Message); }
-                        // Initialize may leave the behaviour disabled again.
-                        try { if (!pickup.enabled) { pickup.enabled = true; Diag.Log("buildmode: re-enabled Pickup on '" + go.name + "' after Initialize."); } } catch { }
-                    }
+                    // 0.4.15: hydration now runs BEFORE this point and
+                    // pre-creates exactly what Awake died on in 0.4.9-0.4.13
+                    // (add_Undocked NRE: the docked/undocked
+                    // PickupDockedEvent fields were null; 0.4.14 log shows
+                    // them hydrated). With those in place and the entity
+                    // linked, retry the real Initialize() -> Awake: if it
+                    // completes, the Pickup gets genuine Awake state
+                    // (docker / dockingChecker / pickupScaler are still
+                    // null and only Awake creates them). If it still NREs,
+                    // the replicated state stays and the grab probe below
+                    // reports what the game's own scoring says.
+                    try { pickup.Initialize(); Diag.Log("buildmode: Initialize() RAN for '" + go.name + "' after hydration (entityLinked=" + (pickup.Entity != null) + ", enabled=" + pickup.enabled + ")."); }
+                    catch (Exception iex) { Diag.Log("buildmode: Initialize() still FAILED for '" + go.name + "': " + iex.Message); }
+                    // Initialize may leave the behaviour disabled again.
+                    try { if (!pickup.enabled) { pickup.enabled = true; Diag.Log("buildmode: re-enabled Pickup on '" + go.name + "' after Initialize."); } } catch { }
+                    if (!_nullsDumped2) { _nullsDumped2 = true; DumpNullMembers(pickup, "still null post-init"); }
                 }
                 try
                 {
@@ -183,32 +180,31 @@ namespace ATTBuilding
                 TrySet(gp, "position", p);
                 TrySet(gp, "poleForward", ext);
                 TrySet(gp, "isIgnoringAngle", true);
-                SetGrabPointOwner(gp, pickup);
+                WireGrabPoint(gp, pickup);
                 made.Add(gp);
             }
             TrySet(pickup, "grabPoints", made.ToArray());
             Diag.Log("buildmode: whole-mesh grab on '" + go.name + "': " + made.Count + " surface grab points, extents=" + ext);
         }
 
-        private static bool _ownerLogged;
+        private static bool _wireLogged;
 
-        // A GrabPoint created in code does not know its Pickup until
-        // something sets the back-reference (normally the editor/Awake
-        // cycle: Pickup.Awake assigns itself into each point). A point
-        // whose owner is null plausibly scores nothing or throws inside
-        // CheckScore. Try the plausible member names with a full hierarchy
-        // walk and type check; log the one that sticks (checked once).
-        private static void SetGrabPointOwner(GrabPoint gp, Pickup pickup)
+        // A GrabPoint created in code differs from an editor-authored one:
+        // nobody serialized its fields. The 0.4.14 signature dump shows
+        // GrabPoint has NO owner back-reference member (CheckScore
+        // receives the Pickup transform as a parameter instead), but it
+        // DOES have a serialized 'transform' member editor points always
+        // carry -- left null, anything dereferencing it fails silently
+        // per point and the candidate is discarded. Wire transform +
+        // local-space interpretation, and backfill null collections
+        // (enabledFromDocks) the scoring path may enumerate.
+        private static void WireGrabPoint(GrabPoint gp, Pickup pickup)
         {
-            foreach (var name in new[] { "interactable", "interactableObject", "owner", "pickup", "_interactable" })
-            {
-                if (TrySetMemberWalk(gp, name, pickup))
-                {
-                    if (!_ownerLogged) { _ownerLogged = true; Diag.Log("buildmode: GrabPoint owner set via '" + name + "'"); }
-                    return;
-                }
-            }
-            if (!_ownerLogged) { _ownerLogged = true; Diag.Log("buildmode: GrabPoint has NO owner member (tried interactable/interactableObject/owner/pickup)"); }
+            bool wired = TrySetMemberWalk(gp, "transform", pickup.transform);
+            if (!wired) wired = TrySet(gp, "transform", pickup.transform);
+            TrySet(gp, "isUsingLocal", true);
+            HydrateGraph(gp, HydrateSkip, null);
+            if (!_wireLogged) { _wireLogged = true; Diag.Log("buildmode: GrabPoint transform wired=" + wired + " (19 surface points)"); }
         }
 
         // Hierarchy-walking, non-public-aware member set with a type check.
@@ -366,7 +362,7 @@ namespace ATTBuilding
             }
         }
 
-        private static System.Collections.Generic.List<MemberSlot> PickupMembers(Type root)
+        private static System.Collections.Generic.List<MemberSlot> GraphMembers(Type root)
         {
             const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly;
             var slots = new System.Collections.Generic.List<MemberSlot>();
@@ -387,23 +383,32 @@ namespace ATTBuilding
             return slots;
         }
 
-        private static void HydratePickupGraph(Pickup pickup)
+        private static int HydrateGraph(object target, string[] skip, string label)
         {
             int made = 0;
             var names = new System.Collections.Generic.List<string>();
-            foreach (var slot in PickupMembers(pickup.GetType()))
+            foreach (var slot in GraphMembers(target.GetType()))
             {
-                if (System.Array.IndexOf(HydrateSkip, slot.Name) >= 0) continue;
+                if (skip != null && System.Array.IndexOf(skip, slot.Name) >= 0) continue;
                 if (slot.MemberType.IsValueType) continue;
-                var current = slot.Read(pickup);
+                var current = slot.Read(target);
                 if (current == Unreadable || current != null) continue;
                 var empty = TryMakeEmpty(slot.MemberType);
                 if (empty == null) continue;
-                if (slot.Write(pickup, empty)) { made++; names.Add(slot.Declaring + "." + slot.Name + " : " + slot.MemberType.Name); }
+                if (slot.Write(target, empty)) { made++; if (label != null) names.Add(slot.Declaring + "." + slot.Name + " : " + slot.MemberType.Name); }
             }
-            if (made > 0) Diag.Log("buildmode: hydrated " + made + " empty Pickup members (" + string.Join(", ", names.ToArray()) + ")");
-            else Diag.FileOnly("buildmode: hydration found no empty members to fill");
-            DumpNullMembers(pickup);
+            if (label != null)
+            {
+                if (made > 0) Diag.Log("buildmode: hydrated " + made + " empty " + label + " members (" + string.Join(", ", names.ToArray()) + ")");
+                else Diag.FileOnly("buildmode: hydration found no empty " + label + " members to fill");
+            }
+            return made;
+        }
+
+        private static void HydratePickupGraph(Pickup pickup)
+        {
+            HydrateGraph(pickup, HydrateSkip, "Pickup");
+            if (!_nullsDumped) { _nullsDumped = true; DumpNullMembers(pickup, "still null"); }
         }
 
         private static object TryMakeEmpty(Type type)
@@ -432,30 +437,28 @@ namespace ATTBuilding
         }
 
         private static bool _nullsDumped;
+        private static bool _nullsDumped2;
 
         // Whatever is STILL null after hydration is something Awake would
         // have wired to another object (a sibling component, a dock, ...).
-        // Those names in the log tell us what to supply next.
-        private static void DumpNullMembers(Pickup pickup)
+        // Those names in the log tell us what to supply next. Run against
+        // a real Pickup too ('refnull:') so normally-null optionals can be
+        // told apart from Awake-created state we are missing.
+        private static void DumpNullMembers(object target, string prefix)
         {
-            if (_nullsDumped) return;
-            _nullsDumped = true;
             try
             {
                 var nulls = new System.Collections.Generic.List<string>();
-                foreach (var slot in PickupMembers(pickup.GetType()))
+                foreach (var slot in GraphMembers(target.GetType()))
                 {
                     if (slot.MemberType.IsValueType) continue;
-                    var v = slot.Read(pickup);
+                    var v = slot.Read(target);
                     if (v != Unreadable && v == null) nulls.Add(slot.Declaring + "." + slot.Name + " : " + slot.MemberType.Name);
                 }
-                if (nulls.Count == 0) Diag.Log("buildmode: no null Pickup members remain");
-                else
-                {
-                    int shown = 0;
-                    foreach (var n in nulls) { if (++shown > 30) break; Diag.Log("buildmode: still null: " + n); }
-                    if (nulls.Count > 30) Diag.Log("buildmode: still null: ... +" + (nulls.Count - 30) + " more");
-                }
+                if (nulls.Count == 0) { Diag.Log("buildmode: " + prefix + ": none"); return; }
+                int shown = 0;
+                foreach (var n in nulls) { if (++shown > 40) break; Diag.Log("buildmode: " + prefix + ": " + n); }
+                if (nulls.Count > 40) Diag.Log("buildmode: " + prefix + ": ... +" + (nulls.Count - 40) + " more");
             }
             catch (Exception ex) { Diag.Log("buildmode: null-member dump failed: " + ex.Message); }
         }
@@ -593,13 +596,14 @@ namespace ATTBuilding
                     var pickup = go.GetComponentInChildren<Pickup>();
                     if (pickup == null) continue;
                     float nearest = -1f;
+                    Interactor nearestHand = null;
                     if (player != null)
                     {
                         foreach (var hand in player.GetComponentsInChildren<Interactor>())
                         {
                             if (hand == null || !hand.IsLocal) continue;
                             float d = Vector3.Distance(hand.transform.position, pickup.transform.position);
-                            if (nearest < 0f || d < nearest) nearest = d;
+                            if (nearest < 0f || d < nearest) { nearest = d; nearestHand = hand; }
                         }
                     }
                     var body = pickup.Rigidbody;
@@ -612,7 +616,18 @@ namespace ATTBuilding
                         + " entity=" + Safe(() => pickup.Entity != null)
                         + " enabled=" + Safe(() => pickup.enabled)
                         + " points=" + Safe(() => pickup.GrabPoints.Length)
+                        + " canInteract=" + SafeMember(pickup, "IsInteractable")
+                        + " netwk=" + SafeMember(pickup, "IsNetworked")
+                        + " chan=" + SafeMember(pickup, "Channels")
                         + " handDist=" + (nearest < 0f ? "n/a" : (Mathf.Round(nearest * 4f) / 4f).ToString("0.00"));
+                    if (nearestHand != null && nearest >= 0f && nearest <= 0.8f && now >= _probeNext)
+                    {
+                        _probeNext = now + 2f;
+                        ProbeGrab(pickup, nearestHand, "'" + go.name + "'");
+                        if (_refPickup != null && _refPickup != pickup
+                            && Vector3.Distance(nearestHand.transform.position, _refPickup.transform.position) <= 0.9f)
+                            ProbeGrab(_refPickup, nearestHand, "ref");
+                    }
                     string prev;
                     if (!_diagState.TryGetValue(id, out prev) || prev != state)
                     {
@@ -640,7 +655,16 @@ namespace ATTBuilding
                                     + " entity=" + Safe(() => best.Entity != null)
                                     + " enabled=" + Safe(() => best.enabled)
                                     + " points=" + Safe(() => best.GrabPoints.Length)
+                                    + " canInteract=" + SafeMember(best, "IsInteractable")
+                                    + " netwk=" + SafeMember(best, "IsNetworked")
+                                    + " chan=" + SafeMember(best, "Channels")
                                     + " netRb=" + (best.gameObject.GetComponent<NetworkRigidbody>() != null));
+                            if (best != null && !_refNullsDumped)
+                            {
+                                _refNullsDumped = true;
+                                _refPickup = best;
+                                DumpNullMembers(best, "refnull");
+                            }
                             else Diag.Log("grabdiag ref: no other Pickup in scene to compare with.");
                         }
                         catch (Exception rex) { Diag.Log("grabdiag ref failed: " + rex.Message); }
@@ -648,6 +672,83 @@ namespace ATTBuilding
                 }
             }
             catch (Exception ex) { Mod.LogOnce("grabdiag poll: " + ex.Message); }
+        }
+
+
+        private static float _probeNext;
+        private static bool _refNullsDumped;
+        private static Pickup _refPickup;
+
+        // Read a member by name over the hierarchy; "-" when absent, "?"
+        // when its getter throws. Compile-safe on both targets (Mono and
+        // IL2CPP member sets differ), unlike direct property access.
+        private static string SafeMember(object target, string name)
+        {
+            if (target == null) return "-";
+            try
+            {
+                const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly;
+                for (var t = target.GetType(); t != null && t != typeof(object); t = t.BaseType)
+                {
+                    var p = t.GetProperty(name, flags);
+                    if (p != null && p.CanRead && p.GetIndexParameters().Length == 0)
+                    {
+                        var v = p.GetValue(target, null);
+                        return v == null ? "null" : v.ToString();
+                    }
+                    var f = t.GetField(name, flags);
+                    if (f != null)
+                    {
+                        var v = f.GetValue(target);
+                        return v == null ? "null" : v.ToString();
+                    }
+                }
+                return "-";
+            }
+            catch { return "?"; }
+        }
+
+        // Reflectively run the game's own grab pipeline for one real hand
+        // and log the verdicts. (Invoking is legal where Harmony-patching
+        // a ref/out method is not -- 0.4.9 crash.) If AssessScore returns
+        // false/0 or throws, the candidate rejection is inside the game
+        // and the exception names the missing state.
+        private static void ProbeGrab(Pickup pickup, Interactor hand, string tag)
+        {
+            try
+            {
+                Diag.Log("grabprobe " + tag + ": allowed=" + InvokeProbe(pickup, "CheckInteractAllowedAndReplace", new object[] { hand })
+                    + " assess=" + InvokeProbe(pickup, "AssessScore", new object[] { hand, 0f })
+                    + " bestGrabSet=" + Safe(() => pickup.BestGrab != null));
+            }
+            catch (Exception ex) { Diag.Log("grabprobe " + tag + " failed: " + ex.Message); }
+        }
+
+        private static string InvokeProbe(object target, string name, object[] args)
+        {
+            try
+            {
+                const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly;
+                for (var t = target.GetType(); t != null && t != typeof(object); t = t.BaseType)
+                {
+                    foreach (var m in t.GetMethods(flags))
+                    {
+                        if (m.Name != name) continue;
+                        var ps = m.GetParameters();
+                        if (ps.Length != args.Length) continue;
+                        if (args.Length > 0 && args[0] != null && !ps[0].ParameterType.IsInstanceOfType(args[0])) continue;
+                        object result = m.Invoke(target, args);
+                        string extra = args.Length > 1 ? " score=" + args[1] : "";
+                        return (result == null ? "void" : result.ToString()) + extra;
+                    }
+                }
+                return "nomethod";
+            }
+            catch (Exception ex)
+            {
+                var inner = ex is System.Reflection.TargetInvocationException && ex.InnerException != null ? ex.InnerException : ex;
+                return "EX " + inner.GetType().Name;
+            }
         }
 
         // The ShardClient Readout pattern: scan the local player's hands.
