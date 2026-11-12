@@ -349,7 +349,7 @@ def test_grab_pipeline_instrumented():
         assert "pickup.enabled = true" in s, f
         assert "hasNetEntity=" in s, f
     for f in ("quest/Main.cs", "pchost/Main.cs"):
-        assert 'Version = "0.4.17"' in read(f), f
+        assert 'Version = "0.4.18"' in read(f), f
 
 
 if __name__ == "__main__":

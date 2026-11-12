@@ -553,3 +553,48 @@ architecture warning is the known-harmless MSB3270; ignore it.
 Everything else from 0.4.16 (native template, profiles, freeze,
 bestGrab hydration ban) is unchanged -- see that section for the
 field-check list.
+
+## 0.4.18 match native exactly, read the hand's scan, backup grab
+
+0.4.16 field results split the problem further:
+
+- The native template WAS captured and applied (layers, GrabPoint
+  design values), and pieces we add are frozen kinematic -- yet our
+  Anvil still scored ~827k while the Stick scored ~0.6. So the
+  template copy was not the whole story.
+- Diffing our gp0 against the native gp0 after the copy left exactly
+  the fields we IMPOSE for whole-mesh grabbing: `transform` wired
+  (native: null), `rotationMode=Surface` (native: Pole),
+  `isIgnoringAngle=True` (native: False), `position` at our surface
+  layout (native: its authored spot).
+
+0.4.18 attacks on three fronts:
+
+- **Match native exactly.** When a template exists, GrabPoint
+  `transform` is now CLEARED (`TryClearMemberWalk`) instead of wired:
+  native points carry null and work in Pickup-local space. Trigger
+  colliders (e.g. an Anvil 'Detection Area') are no longer re-layered
+  onto the grab layer -- only solid colliders are.
+- **Interrogate, don't guess.** Every probe now also logs `handscan:` --
+  the hand Interactor's own `collisionMask`/`collisionLayer`/`radius`/
+  `length`, how many candidates sit in `_OverlapInteractables`, and
+  whether our piece is among them. That splits "never discovered" from
+  "discovered but scored out". And each probe of our piece rebuilds its
+  GrabPoints as the next A/B/C variant -- A: whole-mesh Surface,
+  B: a single pure native clone, C: whole-mesh positions with native
+  Pole semantics -- then settles back on A, so one session shows which
+  imposed value (if any) is the poison.
+- **Backup grab ("grab legit everything").** In build mode, hold a
+  free hand on any tracked spawned piece for ~0.7s and the mod calls
+  the game's own `Interact(hand)` / `GrabWith(hand)` reflectively
+  (polling + Invoke only -- still no Harmony on Pickup). If the game
+  takes it, its own grip release, snapping and Place behave exactly
+  like a normal item grab. If even that no-ops, manual carry engages:
+  the piece follows your hand (kinematic) until you hold your hand
+  still for ~1s, which places it back down frozen. Watch for
+  `backupgrab:` lines to see which path each grab took.
+
+Field-check: `handscan:` (does `containsTarget` ever read True for our
+pieces?), `grabprobe:` score per `variant=`, and whether grabbing now
+works natively; if not, whether dwell-grab / manual carry gives a
+usable way to move Anvils and Map Boards.

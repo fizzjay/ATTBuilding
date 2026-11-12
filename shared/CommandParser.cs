@@ -115,7 +115,7 @@ namespace ATTBuilding
         public static readonly string[] HelpLines =
         {
             "build spawn <prefab name> [count] - spawn a prefab in front of you, e.g. build spawn wooden plank",
-            "build mode on|off - build mode: console-spawned objects can be grabbed and moved like items",
+            "build mode on|off - build mode: console-spawned objects can be grabbed and moved like items (backup: hold a free hand on a spawned piece for ~1s to force-grab it; if manual carry engages, hold your hand still ~1s to put it down)",
             "snapping true|false - while moving a spawned object it stays at set angles (straight)",
             "build snapangle <deg> - angle increment for snapping (default 15, use 45 for coarse)",
             "build grid <metres> - position grid applied when you let go (default 0.25, 0 = off)",

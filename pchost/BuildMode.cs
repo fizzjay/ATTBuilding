@@ -177,6 +177,17 @@ namespace ATTBuilding
             positions.Add(c + new Vector3(0f, ext.y * k, -ext.z * k));
             positions.Add(c + new Vector3(0f, -ext.y * k, ext.z * k));
             positions.Add(c + new Vector3(0f, -ext.y * k, -ext.z * k));
+            // 0.4.18 A/B/C isolation (driven by the probe, see ProbeGrab):
+            // variant 1 installs ONE point that is a pure clone of the
+            // native template point -- no whole-mesh imposition at all --
+            // so the field log can tell whether any imposed value is the
+            // poison behind the ~827k scores.
+            if (_installVariant == 1 && positions.Count > 1)
+            {
+                var single = new System.Collections.Generic.List<Vector3>();
+                single.Add(c);
+                positions = single;
+            }
             var made = new System.Collections.Generic.List<GrabPoint>();
             foreach (var p in positions)
             {
@@ -186,20 +197,30 @@ namespace ATTBuilding
                 // we never saw may be load-bearing -- then impose the
                 // whole-mesh layout on top.
                 if (_gpTemplateValues != null) CopyGrabPointTemplate(gp);
-                gp.rotationMode = RotationMode.Surface;
-                // Reflective writes, NOT direct assignment: the Mono
-                // (PC) GrabPoint has no 'position'/'poleForward'/
-                // 'isIgnoringAngle' members under those names (0.4.16
-                // PC build error) -- member naming differs per target,
-                // which is why this whole file goes through walkers.
-                TrySetMemberWalk(gp, "position", p);
-                TrySetMemberWalk(gp, "poleForward", ext);
-                TrySetMemberWalk(gp, "isIgnoringAngle", true);
+                if (_installVariant == 1)
+                {
+                    // Pure native clone: keep every template design value
+                    // exactly as the Stick's point carries it.
+                    if (_gpTemplateValues == null) TrySetMemberWalk(gp, "position", p);
+                }
+                else
+                {
+                    // Variant 2 keeps the native Pole rotation semantics
+                    // at our surface positions; variant 0 imposes the
+                    // whole-mesh Surface layout. Reflective writes, NOT
+                    // direct assignment: the Mono (PC) GrabPoint has no
+                    // 'position'/'poleForward'/'isIgnoringAngle' members
+                    // under those names (0.4.16 PC build error).
+                    gp.rotationMode = _installVariant == 2 ? RotationMode.Pole : RotationMode.Surface;
+                    TrySetMemberWalk(gp, "position", p);
+                    TrySetMemberWalk(gp, "poleForward", ext);
+                    TrySetMemberWalk(gp, "isIgnoringAngle", _installVariant != 2);
+                }
                 WireGrabPoint(gp, pickup);
                 made.Add(gp);
             }
             TrySet(pickup, "grabPoints", made.ToArray());
-            Diag.Log("buildmode: whole-mesh grab on '" + go.name + "': " + made.Count + " surface grab points, extents=" + ext);
+            Diag.Log("buildmode: whole-mesh grab on '" + go.name + "': " + made.Count + " surface grab points, extents=" + ext + ", variant=" + VariantName(_installVariant));
         }
 
         private static bool _wireLogged;
@@ -215,13 +236,50 @@ namespace ATTBuilding
         // (enabledFromDocks) the scoring path may enumerate.
         private static void WireGrabPoint(GrabPoint gp, Pickup pickup)
         {
-            bool wired = TrySetMemberWalk(gp, "transform", pickup.transform);
-            if (!wired) wired = TrySet(gp, "transform", pickup.transform);
+            bool wired;
+            if (_gpTemplateValues != null)
+            {
+                // 0.4.18: the 0.4.16 native profile shows a real point's
+                // serialized 'transform' is NULL -- points live in Pickup-
+                // local space via isUsingLocal. Ours carried the Pickup
+                // transform: one of the few members still differing from
+                // native, and a suspect for the ~827k scores. Match
+                // native exactly: cleared, not wired.
+                wired = TryClearMemberWalk(gp, "transform");
+            }
+            else
+            {
+                wired = TrySetMemberWalk(gp, "transform", pickup.transform);
+                if (!wired) wired = TrySet(gp, "transform", pickup.transform);
+            }
             // A captured native template already dictated isUsingLocal;
             // only force local space while we are still guessing.
             if (_gpTemplateValues == null) TrySet(gp, "isUsingLocal", true);
             HydrateGraph(gp, HydrateSkip, null);
-            if (!_wireLogged) { _wireLogged = true; Diag.Log("buildmode: GrabPoint transform wired=" + wired + " (19 surface points)"); }
+            if (!_wireLogged) { _wireLogged = true; Diag.Log("buildmode: GrabPoint transform " + (_gpTemplateValues != null ? "cleared-to-native=" : "wired=") + wired + " (surface points)"); }
+        }
+
+        // Set a reference member to null through the hierarchy walk
+        // (TrySetMemberWalk refuses null values by design).
+        private static bool TryClearMemberWalk(object target, string name)
+        {
+            if (target == null) return false;
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly;
+            for (var type = target.GetType(); type != null && type != typeof(object); type = type.BaseType)
+            {
+                var field = type.GetField(name, flags);
+                if (field != null && !field.FieldType.IsValueType)
+                {
+                    try { field.SetValue(target, null); return true; } catch { return false; }
+                }
+                var prop = type.GetProperty(name, flags);
+                if (prop != null && prop.GetIndexParameters().Length == 0 && !prop.PropertyType.IsValueType)
+                {
+                    var setter = prop.GetSetMethod(true);
+                    if (setter != null) { try { setter.Invoke(target, new object[] { null }); return true; } catch { return false; } }
+                }
+            }
+            return false;
         }
 
         // Hierarchy-walking, non-public-aware member set with a type check.
@@ -274,7 +332,12 @@ namespace ATTBuilding
 
         internal static void Tick()
         {
-            if (!BuildState.BuildMode) { _held = null; _heldId = 0; return; }
+            if (!BuildState.BuildMode)
+            {
+                _held = null; _heldId = 0;
+                if (_manualCarry != null) { Place(_manualCarry); _manualCarry = null; _manualHand = null; BuildState.HeldInstanceId = 0; }
+                return;
+            }
             Pickup held = FindHeldTracked();
             if (held != null)
             {
@@ -294,6 +357,7 @@ namespace ATTBuilding
                 _held = null; _heldId = 0; BuildState.HeldInstanceId = 0;
             }
             PollGrabDiag();
+            PollBackupGrab();
         }
 
         private static void Place(Pickup pickup)
@@ -731,6 +795,72 @@ namespace ATTBuilding
             catch { return "?"; }
         }
 
+        private static object ReadMemberWalk(object target, string name)
+        {
+            if (target == null) return Unreadable;
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly;
+            for (var t = target.GetType(); t != null && t != typeof(object); t = t.BaseType)
+            {
+                try
+                {
+                    var p = t.GetProperty(name, flags);
+                    if (p != null && p.CanRead && p.GetIndexParameters().Length == 0) return p.GetValue(target, null);
+                    var f = t.GetField(name, flags);
+                    if (f != null) return f.GetValue(target);
+                }
+                catch { return Unreadable; }
+            }
+            return Unreadable;
+        }
+
+        private static string ScanValue(object v)
+        {
+            return v == Unreadable ? "-" : FormatValue(v);
+        }
+
+        // 0.4.18: read the hand's OWN discovery state while it is near a
+        // tracked piece -- is our Pickup in _OverlapInteractables at all,
+        // and what mask/layer/radius/length is the scan using? This splits
+        // "never discovered" from "discovered but scored out".
+        private static void DumpHandScan(Interactor hand, Pickup target)
+        {
+            try
+            {
+                object list = ReadMemberWalk(hand, "_OverlapInteractables");
+                if (list == Unreadable || list == null) list = ReadMemberWalk(hand, "OverlapInteractables");
+                int count = -1;
+                bool contains = false;
+                var names = new System.Collections.Generic.List<string>();
+                var en = list as System.Collections.IEnumerable;
+                if (en != null)
+                {
+                    count = 0;
+                    foreach (var item in en)
+                    {
+                        if (item == null) continue;
+                        count++;
+                        var comp = item as Component;
+                        if (comp != null && target != null && comp.gameObject == target.gameObject) contains = true;
+                        if (names.Count < 6) names.Add(comp != null ? comp.gameObject.name + "<" + item.GetType().Name + ">" : item.ToString());
+                    }
+                }
+                else if (list != null && list != Unreadable)
+                {
+                    var cnt = ReadMemberWalk(list, "Count");
+                    if (cnt is int) count = (int)cnt;
+                }
+                Diag.Log("handscan: mask=" + ScanValue(ReadMemberWalk(hand, "collisionMask"))
+                    + " layer=" + ScanValue(ReadMemberWalk(hand, "collisionLayer"))
+                    + " radius=" + ScanValue(ReadMemberWalk(hand, "radius"))
+                    + " length=" + ScanValue(ReadMemberWalk(hand, "length"))
+                    + " candidates=" + count
+                    + " containsTarget=" + contains
+                    + " interactingWith=" + ScanValue(ReadMemberWalk(hand, "interactingWith"))
+                    + " [" + string.Join(", ", names.ToArray()) + "]");
+            }
+            catch (Exception ex) { Diag.Log("handscan failed: " + ex.Message); }
+        }
+
         // Reflectively run the game's own grab pipeline for one real hand
         // and log the verdicts. (Invoking is legal where Harmony-patching
         // a ref/out method is not -- 0.4.9 crash.) If AssessScore returns
@@ -739,11 +869,40 @@ namespace ATTBuilding
         private static void ProbeGrab(Pickup pickup, Interactor hand, string tag)
         {
             DumpInteractorMembers(hand);
+            DumpHandScan(hand, pickup);
+            // A/B/C isolation: each probe of OUR piece first rebuilds its
+            // points as the next variant, so one field session shows
+            // which imposed value (if any) causes the ~827k score. After
+            // one full cycle we settle back on the whole-mesh layout.
+            string variant = "";
+            try
+            {
+                if (_templateCaptured && pickup != null && _addedIds.Contains(pickup.gameObject.GetInstanceID()))
+                {
+                    if (!_variantCycleDone)
+                    {
+                        _installVariant = _nextVariant;
+                        InstallSurfaceGrabPoints(pickup.gameObject, pickup);
+                        variant = " variant=" + VariantName(_installVariant);
+                        _nextVariant++;
+                        if (_nextVariant > 2) { _nextVariant = 0; _variantCycleDone = true; }
+                    }
+                    else if (!_variantSettled)
+                    {
+                        _installVariant = 0;
+                        _variantSettled = true;
+                        InstallSurfaceGrabPoints(pickup.gameObject, pickup);
+                        variant = " variant=" + VariantName(0) + " (settled)";
+                    }
+                }
+            }
+            catch (Exception vex) { Diag.Log("grabprobe variant install failed: " + vex.Message); }
             try
             {
                 Diag.Log("grabprobe " + tag + ": allowed=" + InvokeProbe(pickup, "CheckInteractAllowedAndReplace", new object[] { hand })
                     + " assess=" + InvokeProbe(pickup, "AssessScore", new object[] { hand, 0f })
-                    + " bestGrabSet=" + Safe(() => pickup.BestGrab != null));
+                    + " bestGrabSet=" + Safe(() => pickup.BestGrab != null)
+                    + variant);
             }
             catch (Exception ex) { Diag.Log("grabprobe " + tag + " failed: " + ex.Message); }
         }
@@ -792,6 +951,17 @@ namespace ATTBuilding
         private static bool _ourProfileDumped;
         private static bool _nativeProfileDumped;
         private static bool _interactorDumped;
+
+        // 0.4.18 A/B/C GrabPoint isolation state.
+        private static int _installVariant;
+        private static int _nextVariant;
+        private static bool _variantCycleDone;
+        private static bool _variantSettled;
+
+        private static string VariantName(int v)
+        {
+            return v == 1 ? "B-single-native" : (v == 2 ? "C-mesh-pole" : "A-mesh-surface");
+        }
 
         private static readonly string[] GrabPointTemplateMembers =
         {
@@ -905,8 +1075,12 @@ namespace ATTBuilding
             try
             {
                 go.layer = _templateRootLayer;
+                // 0.4.18: only solid colliders join the native grab layer.
+                // Trigger volumes (e.g. an Anvil 'Detection Area') were
+                // re-layered too in 0.4.16, which can poison the hand's
+                // overlap scan with a giant trigger candidate.
                 foreach (var col in go.GetComponentsInChildren<Collider>())
-                    if (col != null) col.gameObject.layer = _templateColliderLayer;
+                    if (col != null && !col.isTrigger) col.gameObject.layer = _templateColliderLayer;
                 if (!_templateAppliedLogged) { _templateAppliedLogged = true; Diag.Log("buildmode: native layers applied to '" + go.name + "' (root=" + _templateRootLayer + ", colliders=" + _templateColliderLayer + ")."); }
             }
             catch { }
@@ -950,6 +1124,198 @@ namespace ATTBuilding
                 catch { }
             }
             Diag.Log("buildmode: Interactor member list dumped to the debug file (imember:).");
+        }
+
+        // ---------------------------------------------------------------
+        // 0.4.18 backup grab ("grab legit everything"): if the hand's own
+        // candidate discovery never presents our added Pickups, stop
+        // waiting for it. In build mode, holding a free hand on a tracked
+        // piece for a short dwell calls the game's own Interact(hand)
+        // ourselves -- AssessScore already says yes when invoked
+        // directly, so being grabbed should follow, and the game's own
+        // grip release then drops it (FindHeldTracked picks the hold up
+        // for snapping/Place as usual). If even that no-ops, we carry
+        // the piece on the hand manually (kinematic follow) until the
+        // hand is held still for ~1s, which puts it down.
+        private static int _dwellHandId;
+        private static int _dwellPickupId;
+        private static float _dwellStart;
+        private static float _nextBackupAttempt;
+        private static Pickup _manualCarry;
+        private static Interactor _manualHand;
+        private static Vector3 _carryLocalPos;
+        private static Quaternion _carryLocalRot;
+        private static float _carryStart;
+        private static Vector3 _stillAnchor;
+        private static float _stillSince;
+
+        private static void PollBackupGrab()
+        {
+            try
+            {
+                if (_manualCarry != null) { UpdateManualCarry(); return; }
+                float now = Time.time;
+                var player = PlayerController.Current;
+                if (player == null) return;
+                foreach (var hand in player.GetComponentsInChildren<Interactor>())
+                {
+                    if (hand == null || !hand.IsLocal) continue;
+                    if (hand.IsInteracting)
+                    {
+                        if (_dwellHandId == hand.GetInstanceID()) _dwellPickupId = 0;
+                        continue;
+                    }
+                    Pickup nearestPickup = null;
+                    float nearestDist = 0.35f;
+                    foreach (int id in TrackedRegistry.Snapshot())
+                    {
+                        var go = Spawner.FindByInstanceId(id);
+                        if (go == null) continue;
+                        var p = go.GetComponentInChildren<Pickup>();
+                        if (p == null) continue;
+                        float d = Vector3.Distance(hand.transform.position, p.transform.position);
+                        foreach (var col in go.GetComponentsInChildren<Collider>())
+                        {
+                            if (col == null || !col.enabled) continue;
+                            float cd = Vector3.Distance(hand.transform.position, col.ClosestPoint(hand.transform.position));
+                            if (cd < d) d = cd;
+                        }
+                        if (d < nearestDist) { nearestDist = d; nearestPickup = p; }
+                    }
+                    int handId = hand.GetInstanceID();
+                    if (nearestPickup == null)
+                    {
+                        if (_dwellHandId == handId) _dwellPickupId = 0;
+                        continue;
+                    }
+                    int pid = nearestPickup.gameObject.GetInstanceID();
+                    if (_dwellHandId != handId || _dwellPickupId != pid)
+                    {
+                        _dwellHandId = handId; _dwellPickupId = pid; _dwellStart = now;
+                        continue;
+                    }
+                    if (now - _dwellStart >= 0.7f && now >= _nextBackupAttempt)
+                    {
+                        _nextBackupAttempt = now + 2.5f;
+                        _dwellPickupId = 0;
+                        AttemptBackupGrab(hand, nearestPickup);
+                        return;
+                    }
+                }
+            }
+            catch (Exception ex) { Mod.LogOnce("backup grab poll: " + ex.Message); }
+        }
+
+        private static void AttemptBackupGrab(Interactor hand, Pickup pickup)
+        {
+            string via = TryGameGrab(pickup, hand);
+            bool held = false;
+            try { held = hand.IsInteracting; } catch { }
+            Diag.Log("backupgrab: dwell-grab on '" + pickup.gameObject.name + "' via " + via
+                + " -> interacting=" + held
+                + " interactors=" + Safe(() => pickup.Interactors.Count));
+            if (held) return;
+            // The game refused even a direct grab call: carry it ourselves.
+            _manualCarry = pickup;
+            _manualHand = hand;
+            try
+            {
+                _carryLocalPos = hand.transform.InverseTransformPoint(pickup.transform.position);
+                _carryLocalRot = Quaternion.Inverse(hand.transform.rotation) * pickup.transform.rotation;
+            }
+            catch { _carryLocalPos = Vector3.zero; _carryLocalRot = Quaternion.identity; }
+            _carryStart = Time.time;
+            _stillAnchor = hand.transform.position;
+            _stillSince = Time.time;
+            FreezeBody(pickup.gameObject, pickup);
+            BuildState.HeldInstanceId = pickup.gameObject.GetInstanceID();
+            Diag.Log("backupgrab: game would not take '" + pickup.gameObject.name + "' -- MANUAL CARRY engaged. Move it with your hand; hold your hand still for ~1s to put it down.");
+        }
+
+        // Invoke the game's own grab entry points by name (never Harmony:
+        // 0.4.9). Try Interact(hand) first, then GrabWith(hand,*,*).
+        private static string TryGameGrab(Pickup pickup, Interactor hand)
+        {
+            string r = InvokeGrabMethod(pickup, "Interact", new object[] { hand });
+            if (r != null) return r;
+            r = InvokeGrabMethod(pickup, "GrabWith", new object[] { hand, false, false });
+            if (r != null) return r;
+            return "no Interact/GrabWith method found";
+        }
+
+        private static string InvokeGrabMethod(object target, string name, object[] args)
+        {
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly;
+            for (var t = target.GetType(); t != null && t != typeof(object); t = t.BaseType)
+            {
+                foreach (var m in t.GetMethods(flags))
+                {
+                    if (m.Name != name) continue;
+                    var ps = m.GetParameters();
+                    if (ps.Length != args.Length) continue;
+                    bool ok = true;
+                    for (int i = 0; i < ps.Length; i++)
+                    {
+                        if (args[i] == null) continue;
+                        if (!ps[i].ParameterType.IsInstanceOfType(args[i])
+                            && ps[i].ParameterType != args[i].GetType()
+                            && !(args[i] is bool && ps[i].ParameterType == typeof(bool)))
+                            ok = false;
+                    }
+                    if (!ok) continue;
+                    try { m.Invoke(target, args); return name + "(hand) invoked"; }
+                    catch (Exception ex)
+                    {
+                        var inner = ex is System.Reflection.TargetInvocationException && ex.InnerException != null ? ex.InnerException : ex;
+                        return name + " EX " + inner.GetType().Name + ": " + inner.Message;
+                    }
+                }
+            }
+            return null;
+        }
+
+        private static void UpdateManualCarry()
+        {
+            try
+            {
+                var pickup = _manualCarry;
+                var hand = _manualHand;
+                if (pickup == null || hand == null)
+                {
+                    _manualCarry = null; _manualHand = null; BuildState.HeldInstanceId = 0;
+                    return;
+                }
+                if (hand.IsInteracting)
+                {
+                    // The game took the hold over (its own grab landed a
+                    // frame late): hand control back to the normal path.
+                    Diag.Log("backupgrab: the game took over the hold on '" + pickup.gameObject.name + "' (native grab).");
+                    _manualCarry = null; _manualHand = null;
+                    return;
+                }
+                pickup.transform.position = hand.transform.TransformPoint(_carryLocalPos);
+                pickup.transform.rotation = hand.transform.rotation * _carryLocalRot;
+                if (BuildState.Snapping)
+                {
+                    pickup.transform.rotation = VectorSnap.SnapRotation(pickup.transform.rotation, BuildState.AngleStepDegrees);
+                    if (BuildState.LivePositionSnap && BuildState.GridMetres > 0f)
+                        pickup.transform.position = VectorSnap.SnapPosition(pickup.transform.position, BuildState.GridMetres);
+                }
+                float now = Time.time;
+                if (Vector3.Distance(hand.transform.position, _stillAnchor) > 0.04f)
+                {
+                    _stillAnchor = hand.transform.position;
+                    _stillSince = now;
+                }
+                else if (now - _carryStart > 1.5f && now - _stillSince > 0.9f)
+                {
+                    _manualCarry = null; _manualHand = null; BuildState.HeldInstanceId = 0;
+                    Place(pickup);
+                    FreezeBody(pickup.gameObject, pickup);
+                    Diag.Log("backupgrab: placed '" + pickup.gameObject.name + "' (manual carry released).");
+                }
+            }
+            catch (Exception ex) { Mod.LogOnce("manual carry: " + ex.Message); }
         }
 
         // The ShardClient Readout pattern: scan the local player's hands.
