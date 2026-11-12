@@ -52,6 +52,7 @@ namespace ATTBuildingQuest
                     added = true;
                 }
                 FixupPickupFields(go, pickup);
+                if (added) HydratePickupFields(pickup);
                 int points = 0;
                 try { points = pickup.GrabPoints == null ? 0 : pickup.GrabPoints.Length; } catch { }
                 if (points == 0) InstallSurfaceGrabPoint(go, pickup);
@@ -81,10 +82,25 @@ namespace ATTBuildingQuest
                     }
                     catch (Exception lex) { Diag.Log("buildmode: entity link failed for '" + go.name + "': " + lex.Message); }
                     try { pickup.enabled = true; } catch { }
-                    try { pickup.Initialize(); Diag.Log("buildmode: Initialize() ran for added Pickup on '" + go.name + "' (entityLinked=" + (pickup.Entity != null) + ", enabled=" + pickup.enabled + ")."); }
-                    catch (Exception iex) { Diag.Log("buildmode: Initialize() FAILED for '" + go.name + "': " + iex.Message); }
-                    // Initialize may leave the behaviour disabled again.
-                    try { if (!pickup.enabled) { pickup.enabled = true; Diag.Log("buildmode: re-enabled Pickup on '" + go.name + "' after Initialize."); } } catch { }
+                    if (pickup.Entity != null)
+                    {
+                        // The 'entity' property setter already registered
+                        // this behaviour with its NetworkEntity (0.4.12 log:
+                        // 'entity linked via property entity', and the
+                        // getter reads it back). Initialize() would only
+                        // re-run Pickup.Awake, which NREs at add_Undocked
+                        // on runtime-added components -- do NOT call it.
+                        // Awake's field setup is replicated by
+                        // FixupPickupFields + HydratePickupFields instead.
+                        Diag.Log("buildmode: skipping Initialize() for '" + go.name + "' (entity registered via setter; Awake NREs on runtime-added Pickups).");
+                    }
+                    else
+                    {
+                        try { pickup.Initialize(); Diag.Log("buildmode: Initialize() ran for added Pickup on '" + go.name + "' (entityLinked=" + (pickup.Entity != null) + ", enabled=" + pickup.enabled + ")."); }
+                        catch (Exception iex) { Diag.Log("buildmode: Initialize() FAILED for '" + go.name + "': " + iex.Message); }
+                        // Initialize may leave the behaviour disabled again.
+                        try { if (!pickup.enabled) { pickup.enabled = true; Diag.Log("buildmode: re-enabled Pickup on '" + go.name + "' after Initialize."); } } catch { }
+                    }
                 }
                 try
                 {
@@ -230,7 +246,74 @@ namespace ATTBuildingQuest
         // object; if interactors flips but nothing holds, Interact refuses.
         private static readonly System.Collections.Generic.Dictionary<int, string> _diagState = new System.Collections.Generic.Dictionary<int, string>();
         private static float _diagNext;
+        private static bool _refDumped;
 
+
+
+        // Pickup.Awake creates the Pickup's working collections (the sets
+        // behind IsDocked and friends). A runtime-added Pickup never gets a
+        // clean Awake -- Initialize() dies inside it at the add_Undocked
+        // subscription -- so those getters NRE forever (0.4.12 poller:
+        // docked=?) and the game's candidate evaluation likely throws on
+        // this object and discards it. Replicate that part of Awake: fill
+        // every null array/collection field with an empty instance.
+        private static void HydratePickupFields(Pickup pickup)
+        {
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly;
+            for (var type = pickup.GetType(); type != null && type != typeof(object); type = type.BaseType)
+            {
+                foreach (var field in type.GetFields(flags))
+                {
+                    object current;
+                    try { current = field.GetValue(pickup); } catch { continue; }
+                    if (current != null) continue;
+                    var ft = field.FieldType;
+                    try
+                    {
+                        if (ft.IsArray)
+                        {
+                            field.SetValue(pickup, System.Array.CreateInstance(ft.GetElementType(), 0));
+                            Diag.Log("buildmode: hydrated '" + field.Name + "' (" + type.Name + ") as empty array");
+                        }
+                        else if (ft.IsClass && ft != typeof(string) && !typeof(UnityEngine.Object).IsAssignableFrom(ft)
+                            && (ft.Name.StartsWith("List") || ft.Name.StartsWith("HashSet") || ft.Name.StartsWith("Dictionary") || ft.Name.StartsWith("Queue") || ft.Name.StartsWith("Stack"))
+                            && ft.GetConstructor(Type.EmptyTypes) != null)
+                        {
+                            field.SetValue(pickup, Activator.CreateInstance(ft));
+                            Diag.Log("buildmode: hydrated '" + field.Name + "' (" + type.Name + ") as new " + ft.Name);
+                        }
+                    }
+                    catch (Exception ex) { Diag.FileOnly("buildmode: hydrate '" + field.Name + "': " + ex.Message); }
+                }
+            }
+            DumpNullFields(pickup);
+        }
+
+        private static bool _nullsDumped;
+
+        // Whatever is STILL null after hydration is something Awake would
+        // have wired to another object (a sibling component, a dock, ...).
+        // Those names in the log tell us what to supply next.
+        private static void DumpNullFields(Pickup pickup)
+        {
+            if (_nullsDumped) return;
+            _nullsDumped = true;
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly;
+            try
+            {
+                for (var type = pickup.GetType(); type != null && type != typeof(object); type = type.BaseType)
+                {
+                    foreach (var field in type.GetFields(flags))
+                    {
+                        if (field.FieldType.IsValueType) continue;
+                        object v;
+                        try { v = field.GetValue(pickup); } catch { continue; }
+                        if (v == null) Diag.Log("buildmode: still null: " + type.Name + "." + field.Name + " : " + field.FieldType.Name);
+                    }
+                }
+            }
+            catch (Exception ex) { Diag.Log("buildmode: null-field dump failed: " + ex.Message); }
+        }
 
         // SetMember silently no-ops when a member is missing and does not
         // walk base types for non-public members, so name-guessing the
@@ -342,12 +425,39 @@ namespace ATTBuildingQuest
                         + " kinematic=" + Safe(() => body != null && body.isKinematic)
                         + " entity=" + Safe(() => pickup.Entity != null)
                         + " enabled=" + Safe(() => pickup.enabled)
+                        + " points=" + Safe(() => pickup.GrabPoints.Length)
                         + " handDist=" + (nearest < 0f ? "n/a" : (Mathf.Round(nearest * 4f) / 4f).ToString("0.00"));
                     string prev;
                     if (!_diagState.TryGetValue(id, out prev) || prev != state)
                     {
                         _diagState[id] = state;
                         Diag.Log("grabdiag: '" + go.name + "' " + state);
+                    }
+                    if (!_refDumped)
+                    {
+                        _refDumped = true;
+                        // Ground truth: state of the nearest REAL (game-
+                        // spawned) Pickup, for direct comparison with ours.
+                        try
+                        {
+                            Pickup best = null; float bestD = 9f;
+                            foreach (var other in UnityEngine.Object.FindObjectsOfType<Pickup>())
+                            {
+                                if (other == null || other == pickup) continue;
+                                float d = Vector3.Distance(other.transform.position, pickup.transform.position);
+                                if (d < bestD) { bestD = d; best = other; }
+                            }
+                            if (best != null)
+                                Diag.Log("grabdiag ref: nearest real Pickup '" + best.gameObject.name + "' interactors=" + Safe(() => best.Interactors.Count)
+                                    + " docked=" + Safe(() => best.IsDocked)
+                                    + " kinematic=" + Safe(() => best.Rigidbody != null && best.Rigidbody.isKinematic)
+                                    + " entity=" + Safe(() => best.Entity != null)
+                                    + " enabled=" + Safe(() => best.enabled)
+                                    + " points=" + Safe(() => best.GrabPoints.Length)
+                                    + " netRb=" + (best.gameObject.GetComponent<NetworkRigidbody>() != null));
+                            else Diag.Log("grabdiag ref: no other Pickup in scene to compare with.");
+                        }
+                        catch (Exception rex) { Diag.Log("grabdiag ref failed: " + rex.Message); }
                     }
                 }
             }

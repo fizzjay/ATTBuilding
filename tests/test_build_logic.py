@@ -287,8 +287,14 @@ def test_grab_pipeline_instrumented():
         assert "PollGrabDiag" in s, f
         assert "grabdiag:" in s, f
         assert "TrackedRegistry.Snapshot()" in s, f
-        # runtime-added Pickup must be Initialized into its entity ...
-        assert "pickup.Initialize()" in s, f
+        # 0.4.13: Awake can never complete on a runtime-added Pickup
+        # (Initialize dies at add_Undocked), so Initialize is gated on the
+        # entity NOT being linked, and Awake's collection setup is
+        # replicated by hydration instead
+        assert "skipping Initialize()" in s, f
+        assert "HydratePickupFields(pickup)" in s, f
+        assert "DumpNullFields(pickup)" in s, f
+        assert "grabdiag ref:" in s, f
         # ... and Pickup.Colliders (populated by Awake, which ran too early)
         assert 'Call(pickup.Colliders, "Add", c)' in s, f
         assert "entityLinked=" in s, f
@@ -304,7 +310,7 @@ def test_grab_pipeline_instrumented():
         assert "pickup.enabled = true" in s, f
         assert "hasNetEntity=" in s, f
     for f in ("quest/Main.cs", "pchost/Main.cs"):
-        assert 'Version = "0.4.12"' in read(f), f
+        assert 'Version = "0.4.13"' in read(f), f
 
 
 if __name__ == "__main__":

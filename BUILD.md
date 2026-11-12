@@ -416,3 +416,19 @@ Also hardened the grab poller: each property is read through a guard
 never completed and one bad getter was blinding the whole poll.
 `Initialize()` still NREs in `Pickup.Awake` (`add_Undocked`) while the
 entity is unlinked -- expected to clear once the link sticks.
+
+## 0.4.13 replicate Awake instead of running it
+
+0.4.12 cracked the entity link (`entity linked via property 'entity'
+(NetworkEntityBehaviour)`, entityLinked=True, enabled=True) and the
+poller watched a live grab attempt: handDist fell to 0.50 while
+interactors stayed 0 and `docked=?` -- `get_IsDocked` still NREs,
+because Pickup.Awake never completed (Initialize dies in it at
+add_Undocked, on something other than Entity) so the collections
+Awake creates don't exist. Since the 'entity' setter already
+registers the behaviour, 0.4.13 stops calling Initialize() when
+linked and replicates Awake's field setup: every null array/
+collection field on the Pickup is hydrated with an empty instance,
+remaining null fields are dumped by name (`still null:` lines), and
+the poller logs a one-shot `grabdiag ref:` snapshot of the nearest
+real game-spawned Pickup as ground truth for comparison.
