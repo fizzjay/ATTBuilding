@@ -3,12 +3,13 @@ using System.Globalization;
 
 namespace ATTBuilding
 {
-    public enum CommandKind { None, Help, Spawn, ServerPing, BuildMode, Snapping, SnapAngle, Grid, LivePositionSnap, List, Spawned, Clear, Unknown }
+    public enum CommandKind { None, Help, Spawn, ServerPing, Nick, DelNick, BuildMode, Snapping, SnapAngle, Grid, LivePositionSnap, List, Spawned, Clear, Unknown }
 
     public sealed class ParsedCommand
     {
         public CommandKind Kind;
-        public string Text = "";      // prefab name / list filter
+        public string Text = "";      // prefab name / list filter / nick target
+        public string Text2 = "";     // nickname (for Nick)
         public float Number;          // count, angle, grid
         public bool Flag;             // on/off value
         public string Error = "";     // set when Kind == Unknown because of bad syntax
@@ -81,6 +82,24 @@ namespace ATTBuilding
             if (verb == "livesnap") { result.Kind = CommandKind.LivePositionSnap; result.Flag = i + 1 >= words.Length ? true : SnapMath.ParseBool(words[i + 1], true); return result; }
             if (verb == "list") { result.Kind = CommandKind.List; result.Text = Join(words, i + 1, words.Length); return result; }
             if (verb == "spawned") { result.Kind = CommandKind.Spawned; return result; }
+            if (verb == "nick")
+            {
+                // build nick <player name|id|saved nickname> <nickname>
+                result.Kind = CommandKind.Nick;
+                if (i + 2 >= words.Length) { result.Kind = CommandKind.Unknown; result.Error = "Usage: build nick <player name|id> <nickname>"; return result; }
+                result.Text = words[i + 1];
+                result.Text2 = Join(words, i + 2, words.Length);
+                return result;
+            }
+            if (verb == "delnick" || (verb == "del" && i + 1 < words.Length && Is(words[i + 1], "nick")))
+            {
+                // build del nick <nickname>   (also: build delnick <nickname>)
+                result.Kind = CommandKind.DelNick;
+                int from = verb == "del" ? i + 2 : i + 1;
+                result.Text = Join(words, from, words.Length);
+                if (result.Text.Length == 0) { result.Kind = CommandKind.Unknown; result.Error = "Usage: build del nick <nickname>"; }
+                return result;
+            }
             if (verb == "ping") { result.Kind = CommandKind.ServerPing; return result; }
             if (verb == "clear" || verb == "despawn") { result.Kind = CommandKind.Clear; return result; }
             if (verb == "help" || verb == "?") { result.Kind = CommandKind.Help; return result; }
@@ -101,6 +120,8 @@ namespace ATTBuilding
             "build list [filter] - loaded prefab names you can spawn",
             "build spawned - how many console-spawned objects are tracked for build mode",
             "build ping - ask the server whether ATTBuilding is installed/registered there (reply shows its version)",
+            "build nick <player name|id> <nickname> - save a nickname for a player on the server (saved in nicks.txt; nicknames work anywhere a player is named)",
+            "build del nick <nickname> - delete a saved nickname",
             "build clear - remove every console-spawned object",
         };
 

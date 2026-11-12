@@ -1,6 +1,7 @@
 
 using System;
 using System.Collections.Generic;
+using Alta.Chunks;
 using Alta.Networking;
 using Alta.Networking.Scripts.Player;
 using ATT.Character.QuickAccessMenu;
@@ -84,6 +85,24 @@ namespace ATTBuilding
                 : "Spawn failed (server refused or prefab cannot be spawned here).");
         }
 
+internal static void SetNick(string target, string nickname, Action<string> print)
+        {
+            Diag.Log("nick: set '" + nickname + "' for '" + target + "' authority[" + AuthorityDescription() + "]");
+            if (HasAuthority()) { print(ServerCommands.NickLocal(target, nickname)); return; }
+            if (BuildNet.SendNickSet(target, nickname)) { print("Asking the server to save nickname '" + nickname + "' for '" + target + "' ..."); ConsoleHook.BeginWait(print, "build nick " + target + " " + nickname + " [direct]"); }
+            else if (NetRoute.Send("build nick " + target + " " + nickname, print)) { ConsoleHook.BeginWait(print, "build nick " + target + " " + nickname); }
+            else print("Could not reach the server to save that nickname.");
+        }
+
+        internal static void DeleteNick(string nickname, Action<string> print)
+        {
+            Diag.Log("nick: delete '" + nickname + "' authority[" + AuthorityDescription() + "]");
+            if (HasAuthority()) { print(ServerCommands.DelNickLocal(nickname)); return; }
+            if (BuildNet.SendNickDel(nickname)) { print("Asking the server to delete nickname '" + nickname + "' ..."); ConsoleHook.BeginWait(print, "build del nick " + nickname + " [direct]"); }
+            else if (NetRoute.Send("build delnick " + nickname, print)) { ConsoleHook.BeginWait(print, "build delnick " + nickname); }
+            else print("Could not reach the server to delete that nickname.");
+        }
+
         internal static void PingServer(Action<string> print)
         {
             Diag.Log("ping: requested; localPlayer[" + LocalPlayerDescription() + "] authority[" + AuthorityDescription() + "]");
@@ -111,6 +130,10 @@ namespace ATTBuilding
                     NetworkEntity entity = SpawnHelper.Spawn(prefab, SpawnData.Default, null, thisAt, rot, null);
                     if (entity == null) { Diag.Log("spawn: SpawnHelper.Spawn returned NULL for '" + Clean(prefab.name) + "' (prefab refused here)."); continue; }
                     done++;
+                    // Native SpawnCommandModule assigns the chunk after
+                    // spawning; without it an entity can exist yet never
+                    // stream to clients.
+                    try { var chunk = LocationChunkHelper.GetBestContaining(thisAt, null); if (chunk != null) entity.Chunk = chunk; } catch (Exception cex) { Diag.FileOnly("spawn: chunk assign failed: " + cex.Message); }
                     Diag.Log("spawn: SpawnHelper created '" + entity.gameObject.name + "' instance=" + entity.gameObject.GetInstanceID());
                     Track(entity);
                 }

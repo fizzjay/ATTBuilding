@@ -3,6 +3,7 @@ using System;
 using ATTBuilding; // shared/ types (BuildState, CommandParser, TrackedRegistry, VectorSnap): sibling namespace, not visible unqualified without this
 using System.Collections.Generic;
 using Il2Cpp;
+using Il2CppAlta.Chunks;
 using Il2CppAlta.Networking;
 using Il2CppAlta.Networking.Scripts.Player;
 using Il2CppATT.Character.QuickAccessMenu;
@@ -87,6 +88,22 @@ namespace ATTBuildingQuest
                 : "Spawn failed (server refused or prefab cannot be spawned here).");
         }
 
+internal static void SetNick(string target, string nickname, Action<string> print)
+        {
+            Diag.Log("nick: set '" + nickname + "' for '" + target + "' authority[" + AuthorityDescription() + "]");
+            if (BuildNet.SendNickSet(target, nickname)) { print("Asking the server to save nickname '" + nickname + "' for '" + target + "' ..."); ConsoleHook.BeginWait(print, "build nick " + target + " " + nickname + " [direct]"); }
+            else if (NetRoute.Send("build nick " + target + " " + nickname, print)) { ConsoleHook.BeginWait(print, "build nick " + target + " " + nickname); }
+            else print("Could not reach the server to save that nickname (join a server running ATTBuilding first).");
+        }
+
+        internal static void DeleteNick(string nickname, Action<string> print)
+        {
+            Diag.Log("nick: delete '" + nickname + "' authority[" + AuthorityDescription() + "]");
+            if (BuildNet.SendNickDel(nickname)) { print("Asking the server to delete nickname '" + nickname + "' ..."); ConsoleHook.BeginWait(print, "build del nick " + nickname + " [direct]"); }
+            else if (NetRoute.Send("build delnick " + nickname, print)) { ConsoleHook.BeginWait(print, "build delnick " + nickname); }
+            else print("Could not reach the server to delete that nickname (join a server running ATTBuilding first).");
+        }
+
         internal static void PingServer(Action<string> print)
         {
             Diag.Log("ping: requested; localPlayer[" + LocalPlayerDescription() + "] authority[" + AuthorityDescription() + "]");
@@ -114,6 +131,7 @@ namespace ATTBuildingQuest
                     NetworkEntity entity = SpawnHelper.Spawn(prefab, SpawnData.Default, null, thisAt, rot, null);
                     if (entity == null) { Diag.Log("spawn: SpawnHelper.Spawn returned NULL for '" + Clean(prefab.name) + "' (prefab refused here)."); continue; }
                     done++;
+                    try { var chunk = LocationChunkHelper.GetBestContaining(thisAt, null); if (chunk != null) entity.Chunk = chunk; } catch (Exception cex) { Diag.FileOnly("spawn: chunk assign failed: " + cex.Message); }
                     Diag.Log("spawn: SpawnHelper created '" + entity.gameObject.name + "' instance=" + entity.gameObject.GetInstanceID());
                     Track(entity);
                 }

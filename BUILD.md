@@ -276,3 +276,21 @@ the shared `ServerCommands.SpawnForPlayer`, and replies on the same message.
 The Alta route remains as a logged fallback. Watch for `buildnet:` lines on
 both ends; a server without the new PC build simply never answers message
 139, which the client timeout now says explicitly.
+
+## 0.4.5 invisible spawns + nicknames
+
+Spawning worked end-to-end in 0.4.4 (server SUCCESS, client replies) but
+the items weren't visible in game. Against the game's own
+`SpawnCommandModule`, our spawn missed two things: the pivot was placed
+exactly on the surface point (prefabs whose pivot isn't at their base
+spawn buried), and the native path's `entity.Chunk =
+LocationChunkHelper.GetBestContaining(position)` assignment after
+`SpawnHelper.Spawn`. Both are now done (server + local-authority paths),
+with the chunk result logged.
+
+Nicknames: `build nick <player name|id> <nickname>` saves
+`nickname=identifier|username` to the server's
+`UserData/ATTBuilding/nicks.txt` (survives restarts, hand-editable);
+`build del nick <nickname>` removes one. Saved nicknames resolve anywhere
+a player token is accepted (spawn routing, `build nick` itself), and all
+changes ride the direct channel and are logged server-side.

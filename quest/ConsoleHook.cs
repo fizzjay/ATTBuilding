@@ -115,6 +115,8 @@ namespace ATTBuildingQuest
                 case CommandKind.List: Spawner.ListMatching(cmd.Text, Print); break;
                 case CommandKind.Spawned: Print(TrackedRegistry.Count + " console-spawned object(s) tracked for build mode."); break;
                 case CommandKind.ServerPing: Spawner.PingServer(Print); break;
+                case CommandKind.Nick: Spawner.SetNick(cmd.Text, cmd.Text2, Print); break;
+                case CommandKind.DelNick: Spawner.DeleteNick(cmd.Text, Print); break;
                 case CommandKind.Clear: Print(Spawner.ClearSpawned() + " console-spawned object(s) removed."); break;
                 case CommandKind.Unknown: Print(cmd.Error); break;
             }

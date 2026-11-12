@@ -24,11 +24,11 @@ def test_quantize_guarantees_straight_angles():
 
 def test_parser_commands_exist_in_both_platforms():
     parser = read("shared/CommandParser.cs")
-    for verb in ('"spawn"', '"ping"', '"mode"', '"snapping"', '"snapangle"', '"grid"', '"list"', '"spawned"', '"clear"', '"help"'):
+    for verb in ('"spawn"', '"ping"', '"nick"', '"del"', '"mode"', '"snapping"', '"snapangle"', '"grid"', '"list"', '"spawned"', '"clear"', '"help"'):
         assert verb in parser, verb
     for platform in ("pchost", "quest"):
         hook = read(f"{platform}/ConsoleHook.cs")
-        for kind in ("CommandKind.Spawn", "CommandKind.ServerPing", "CommandKind.BuildMode", "CommandKind.Snapping",
+        for kind in ("CommandKind.Spawn", "CommandKind.ServerPing", "CommandKind.Nick", "CommandKind.DelNick", "CommandKind.BuildMode", "CommandKind.Snapping",
                      "CommandKind.SnapAngle", "CommandKind.Grid", "CommandKind.Clear"):
             assert kind in hook, (platform, kind)
 
@@ -125,6 +125,16 @@ def test_reported_build_errors_stay_fixed():
         assert spawner.index("BuildNet.SendSpawn") < spawner.index("NetRoute.Send")  # direct first, Alta fallback
     assert "BuildNet.cs" in read("pchost/ATTBuilding.csproj") and "BuildNet.cs" in read("quest/ATTBuilding.csproj")
     assert "SpawnForPlayer" in read("pchost/ServerCommands.cs") and "BuildNet.Install" in read("quest/Main.cs")
+    # Nicknames + invisible-spawn fix (0.4.5): the native spawn command
+    # assigns entity.Chunk after SpawnHelper.Spawn and we now match it;
+    # nicknames persist server-side in nicks.txt and resolve in FindPlayer.
+    assert "LocationChunkHelper.GetBestContaining" in read("pchost/ServerCommands.cs")
+    assert "LocationChunkHelper.GetBestContaining" in read("pchost/Spawner.cs")
+    assert "nicks.txt" in read("pchost/ServerCommands.cs") and "SetNickByToken" in read("pchost/ServerCommands.cs")
+    assert "Text2" in read("shared/CommandParser.cs")
+    for proj in ("pchost", "quest"):
+        assert "SendNickSet" in read(f"{proj}/BuildNet.cs") and "SendNickDel" in read(f"{proj}/BuildNet.cs")
+        assert "SetNick" in read(f"{proj}/Spawner.cs") and "DeleteNick" in read(f"{proj}/Spawner.cs")
     # Console flight fix: it must be a locked panel, not a loose
     # zero-gravity physics body. It only unlocks while a local hand is
     # actually interacting with its Pickup, then freezes on release.

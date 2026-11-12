@@ -29,6 +29,8 @@ namespace ATTBuilding
         private const byte KindSpawn = 1;
         private const byte KindReply = 2;
         private const byte KindPing = 3;
+        private const byte KindNickSet = 4;
+        private const byte KindNickDel = 5;
 
         internal static Connection ToServer;
         private static int _nextRequest = 1;
@@ -79,6 +81,45 @@ namespace ATTBuilding
             catch (Exception ex) { Diag.Log("buildnet: ping send FAILED: " + ex); return false; }
         }
 
+        internal static bool SendNickSet(string target, string nickname)
+        {
+            var c = ToServer;
+            if (c == null || c.IsDisposed) { Diag.Log("buildnet: cannot send nick set: no live server connection captured yet."); return false; }
+            int req = _nextRequest++;
+            try
+            {
+                c.Send(null, Message, delegate(Connection conn, Stream s)
+                {
+                    byte kind = KindNickSet; s.SerializeByte(ref kind);
+                    int r = req; s.SerializeInteger(ref r);
+                    string a = target ?? ""; s.SerializeString(ref a, (Stream.StringEncoding)1);
+                    string b = nickname ?? ""; s.SerializeString(ref b, (Stream.StringEncoding)1);
+                });
+                Diag.Log("buildnet: nick set #" + req + " sent (target='" + target + "' nickname='" + nickname + "').");
+                return true;
+            }
+            catch (Exception ex) { Diag.Log("buildnet: nick set FAILED: " + ex); return false; }
+        }
+
+        internal static bool SendNickDel(string nickname)
+        {
+            var c = ToServer;
+            if (c == null || c.IsDisposed) { Diag.Log("buildnet: cannot send nick delete: no live server connection captured yet."); return false; }
+            int req = _nextRequest++;
+            try
+            {
+                c.Send(null, Message, delegate(Connection conn, Stream s)
+                {
+                    byte kind = KindNickDel; s.SerializeByte(ref kind);
+                    int r = req; s.SerializeInteger(ref r);
+                    string a = nickname ?? ""; s.SerializeString(ref a, (Stream.StringEncoding)1);
+                });
+                Diag.Log("buildnet: nick delete #" + req + " sent (nickname='" + nickname + "').");
+                return true;
+            }
+            catch (Exception ex) { Diag.Log("buildnet: nick delete FAILED: " + ex); return false; }
+        }
+
         private static void ClientRead(Connection connection, Stream s)
         {
             try
@@ -113,6 +154,28 @@ namespace ATTBuilding
                     Diag.Log("buildnet: PING #" + req0 + " from connection " + connection.Identifier + " player=" + (who0 == null || who0.UserInfo == null ? "?" : who0.UserInfo.Username)
                         + "; ATTBuilding " + Mod.Version + " (direct channel). Alta module registered=" + ServerCommands.Registered);
                     Reply(connection, req0, true, "ATTBuilding server " + Mod.Version + " is HERE on the direct channel (Alta 'build' module registered=" + ServerCommands.Registered + "). Spawn away.");
+                    return;
+                }
+                if (kind == KindNickSet)
+                {
+                    int reqN = 0; s.SerializeInteger(ref reqN);
+                    string targetToken = null; s.SerializeString(ref targetToken, (Stream.StringEncoding)1);
+                    string nickname = null; s.SerializeString(ref nickname, (Stream.StringEncoding)1);
+                    var requester = connection.Player as Player;
+                    Diag.Log("buildnet: NICK SET #" + reqN + " from " + (requester == null || requester.UserInfo == null ? "?" : requester.UserInfo.Username)
+                        + ": target='" + targetToken + "' nickname='" + nickname + "'");
+                    bool okN; string resultN = ServerCommands.SetNickByToken(requester, targetToken, nickname, out okN);
+                    Reply(connection, reqN, okN, resultN);
+                    return;
+                }
+                if (kind == KindNickDel)
+                {
+                    int reqD = 0; s.SerializeInteger(ref reqD);
+                    string nicknameD = null; s.SerializeString(ref nicknameD, (Stream.StringEncoding)1);
+                    var requesterD = connection.Player as Player;
+                    Diag.Log("buildnet: NICK DEL #" + reqD + " from " + (requesterD == null || requesterD.UserInfo == null ? "?" : requesterD.UserInfo.Username) + ": nickname='" + nicknameD + "'");
+                    bool okD; string resultD = ServerCommands.DeleteNickByName(requesterD, nicknameD, out okD);
+                    Reply(connection, reqD, okD, resultD);
                     return;
                 }
                 if (kind != KindSpawn) { Diag.FileOnly("buildnet: server got unknown kind " + kind + " from connection " + connection.Identifier + "; ignored."); return; }
