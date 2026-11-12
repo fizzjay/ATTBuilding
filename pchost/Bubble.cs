@@ -28,10 +28,30 @@ namespace ATTBuilding
                 if (_menuType == null || _actionType == null) return "bubble: QuickAccess types not found in this build.";
                 var ignored = AccessTools.PropertyGetter(_actionType, "IsIgnored");
                 if (ignored != null) harmony.Patch(ignored, postfix: new HarmonyMethod(typeof(Bubble), nameof(IgnoredPostfix)));
+                if (Mod.SuppressDummy)
+                {
+                    var concrete = AccessTools.TypeByName("EquipmentModeQuickAccess");
+                    if (concrete != null)
+                        foreach (string verb in new[] { "Open", "Run" })
+                        {
+                            var m = AccessTools.Method(concrete, verb);
+                            if (m != null) harmony.Patch(m, prefix: new HarmonyMethod(typeof(Bubble), nameof(EquipmentPrefix)));
+                        }
+                }
                 _installed = true;
                 return "bubble: quick-access 'ATT Building Console' hook ready (reopen the wrist menu after joining).";
             }
             catch (Exception ex) { return "bubble: hook failed: " + ex.Message; }
+        }
+
+        private static bool EquipmentPrefix(object __instance)
+        {
+            var obj = __instance as UnityEngine.Object;
+            if (obj == null || _ourActionId == 0 || obj.GetInstanceID() != _ourActionId) return true;
+            Diag.Log("bubble: our clone selected -- opening console, native equipment dummy suppressed.");
+            string msg = ConsoleOpener.Toggle();
+            if (msg != null) Mod.Log.Msg(msg);
+            return false;
         }
 
         private static void IgnoredPostfix(object __instance, ref bool __result)

@@ -162,3 +162,21 @@ Logging added (this is the part that ends the guessing):
 
 If 0.2.0 still closes on menu open, send `debug.log` + `crumb.txt`: the API
 dump and state changes in there name the exact member/method involved.
+
+## 0.3.0 (from live testing)
+
+- **No duplicate equipment dummy:** our bubble is a clone of the native
+  EquipmentMode action, whose own `Open` spawns the equipment dummy. A
+  Harmony prefix on the *concrete* `EquipmentModeQuickAccess.Open/Run`
+  (base-class patching stays banned -- that was the menu-open crash)
+  diverts only our clone to the console; your real equipment bubble and
+  its dummy are untouched. Pref: `SuppressDummy` (restart to change).
+- **Keyboard returns after every command:** after handling a command the
+  console clears and immediately re-focuses its input field
+  (`ActivateInputField`/`Select` via reflection); if submitting dismissed
+  the panel, it respawns at once.
+- **Movable console:** the summoned console gets a gravity-free
+  `Rigidbody`+`Pickup`, so you can grab and move it like an item
+  (best-effort, logged in `debug.log`).
+- **Spawns a tad up:** head height +0.12 m at 1 m out, instead of 0.25 m
+  below the head.

@@ -46,9 +46,10 @@ Mod.Log.Msg("server: Alta.Console module 'build' (build spawn <player> <hash>) a
 
     internal static class Mod
     {
-        internal const string Version = "0.2.0";
+        internal const string Version = "0.3.0";
         internal static bool BubbleEnabled = true;
         internal static bool ConsoleEnabled = true;
+        internal static bool SuppressDummy = true;
         internal static MelonLogger.Instance Log;
         internal static string DataDir;
         private static string _onceKey;
@@ -69,6 +70,7 @@ Mod.Log.Msg("server: Alta.Console module 'build' (build spawn <player> <hash>) a
             BuildState.Snapping = cat.CreateEntry("SnappingDefault", false).Value;
             Mod.BubbleEnabled = cat.CreateEntry("BubbleEnabled", true).Value;
             Mod.ConsoleEnabled = cat.CreateEntry("ConsoleEnabled", true).Value;
+            Mod.SuppressDummy = cat.CreateEntry("SuppressDummy", true).Value;
         }
         internal static void Save()
         {

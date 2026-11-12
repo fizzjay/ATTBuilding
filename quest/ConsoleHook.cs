@@ -50,6 +50,10 @@ namespace ATTBuildingQuest
             try { Run(CommandParser.Parse(text)); }
             catch (Exception ex) { Print("Error: " + ex.Message); Mod.LogOnce("build command: " + ex); }
             try { ClearInput(field); } catch { }
+            try { RefocusInput(field); } catch (Exception ex) { Diag.FileOnly("refocus: " + ex.Message); }
+            // If submitting dismissed the panel itself, respawn it straight
+            // away (a tad up, in front) so the keyboard comes back with it.
+            try { if (!ConsoleOpener.IsVisible) Diag.FileOnly("console: respawned after command: " + ConsoleOpener.Summon()); } catch { }
             return false;
         }
 
@@ -177,6 +181,51 @@ namespace ATTBuildingQuest
         // (AdminConsole pattern from the reference code).
         internal static void NoteServerReply(string result) { if (!string.IsNullOrEmpty(result)) Print("(server) " + result); }
         internal static void BeginWait(Action<string> print) { _print = print; _waitingUntil = UnityEngine.Time.time + 10f; }
+
+        private static object _lastField;
+
+        // Re-focus the console's input field (brings the Quest keyboard back
+        // up) right after a command, so you can type the next one without
+        // tapping the field again. Reflection: the InputField type/members
+        // differ between Mono and IL2CPP (never name them directly).
+        internal static void RefocusInput(object field)
+        {
+            if (field != null) _lastField = field;
+            object target = field ?? _lastField;
+            if (target == null) return;
+            var type = target.GetType();
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+            foreach (string name in new[] { "ActivateInputField", "Select", "OnPointerClick" })
+            {
+                var m = type.GetMethod(name, flags, null, System.Type.EmptyTypes, null);
+                if (m == null) continue;
+                m.Invoke(target, null);
+                Diag.FileOnly("console: input refocused via " + name + " (keyboard should be back).");
+                return;
+            }
+            Diag.FileOnly("console: no refocus method found on input field; tap it to type again.");
+        }
+
+        // Let the player pick the console up and move it like an item:
+        // consoles have no Pickup of their own, so lend them one (plus a
+        // gravity-free Rigidbody, which Pickup requires). Best-effort and
+        // logged -- if the game's Pickup rejects a non-networked host,
+        // debug.log says so and the console simply stays put.
+        internal static void EnsureMovable(UnityEngine.GameObject go)
+        {
+            try
+            {
+                if (go.GetComponentInChildren<Pickup>() != null) return;
+                var body = go.GetComponent<UnityEngine.Rigidbody>();
+                if (body == null) body = go.AddComponent<UnityEngine.Rigidbody>();
+                if (body != null) { body.useGravity = false; }
+                var added = go.AddComponent(Il2CppType.Of<Pickup>());
+                if (added == null) { Diag.FileOnly("console movable: AddComponent<Pickup> returned null."); return; }
+                Diag.Log("console: made grabbable (added Pickup) -- grab it to move it.");
+            }
+            catch (Exception ex) { Diag.FileOnly("console movable: " + ex); }
+        }
+
         internal static void TickTimeout()
         {
             if (_waitingUntil < 0f || UnityEngine.Time.time < _waitingUntil) return;
@@ -184,6 +233,7 @@ namespace ATTBuildingQuest
             if (_print != null) _print("No answer from the server. It may not run ATTBuilding, or you may lack spawn permission there.");
         }
     }
+
 
     // Summons the game's RuntimeConsole in front of the player (the
     // DevToolsPatch pattern): reuse the scene copy if one exists, otherwise
@@ -223,10 +273,11 @@ foreach (UnityEngine.Object value in UnityEngine.Resources.FindObjectsOfTypeAll(
                 if (forward.sqrMagnitude < 0.0001f) forward = UnityEngine.Vector3.forward;
                 forward.Normalize();
                 go.transform.SetParent(null);
-                go.transform.position = head.position + forward * 0.9f + UnityEngine.Vector3.down * 0.25f;
+                go.transform.position = head.position + forward * 1.0f + UnityEngine.Vector3.up * 0.12f; // a tad up: type without bending down
                 go.transform.rotation = UnityEngine.Quaternion.LookRotation(forward);
                 go.SetActive(true);
                 _console = go;
+                ConsoleHook.EnsureMovable(go);
                 var rc = go.GetComponent<RuntimeConsole>();
                 if (rc != null) { try { ConsoleHook.SetMember(rc, "logFilter", 0); } catch { } }
                 Crumb.At("console: summoned");

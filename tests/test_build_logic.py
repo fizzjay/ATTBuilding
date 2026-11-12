@@ -86,6 +86,18 @@ def test_reported_build_errors_stay_fixed():
         for bad in ("_console.outputBuffer", "_console.outputField", "_console.CopyBufferToOutput()", "rc.logFilter"):
             assert bad not in hook, (proj, bad)
         assert 'GetMember(_console, "outputBuffer")' in hook and 'SetMember(rc, "logFilter", 0)' in hook
+    # 0.3.0 user requests: dummy suppression patches ONLY the concrete
+    # EquipmentModeQuickAccess (never the base class), console spawns a tad
+    # up, is grabbable, and the input is refocused/respawned after commands.
+    for proj in ("pchost", "quest"):
+        bubble = read(f"{proj}/Bubble.cs")
+        assert "EquipmentModeQuickAccess" in bubble and "EquipmentPrefix" in bubble
+        assert 'AccessTools.Method(typeof(QuickAccessMenuAction), "Open")' not in bubble
+        assert "SuppressDummy" in bubble
+        hook = read(f"{proj}/ConsoleHook.cs")
+        assert "UnityEngine.Vector3.up * 0.12f" in hook and "Vector3.down * 0.25f" not in hook
+        assert "EnsureMovable" in hook and "RefocusInput" in hook and "respawned after command" in hook
+        assert "ADD_Pickup" not in hook
     # Crash discipline, round 2 (crash ON menu open): no Harmony patches on
     # QuickAccessMenuAction Run/Open in either build (ArmorUpdate leaves
     # Run/Open/Close untouched) -- activation is polled bool state instead.

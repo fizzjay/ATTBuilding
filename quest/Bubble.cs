@@ -32,6 +32,18 @@ namespace ATTBuildingQuest
             {
                 var ignored = AccessTools.PropertyGetter(typeof(QuickAccessMenuAction), "IsIgnored");
                 if (ignored != null) harmony.Patch(ignored, postfix: new HarmonyMethod(typeof(Bubble), nameof(IgnoredPostfix)));
+                if (Mod.SuppressDummy)
+                {
+                    // Concrete type only (NOT the QuickAccessMenuAction base
+                    // class that crashed on menu-open when patched): divert
+                    // our clone so its native equipment dummy never spawns.
+                    foreach (string verb in new[] { "Open", "Run" })
+                    {
+                        var m = AccessTools.Method(typeof(EquipmentModeQuickAccess), verb);
+                        if (m != null) { harmony.Patch(m, prefix: new HarmonyMethod(typeof(Bubble), nameof(EquipmentPrefix))); Diag.FileOnly("bubble: suppress-dummy patch on EquipmentModeQuickAccess." + verb); }
+                        else Diag.FileOnly("bubble: EquipmentModeQuickAccess." + verb + " not found; polled fallback remains.");
+                    }
+                }
                 _installed = true;
                 DumpActionApi();
                 return "bubble: quick-access 'ATT Building Console' ready (activation is polled, Run/Open are NOT patched).";
@@ -131,6 +143,15 @@ namespace ATTBuildingQuest
                 if (close != null) { close.Invoke(_action, null); Diag.FileOnly("bubble: called action Close()."); }
             }
             catch (Exception ex) { Diag.FileOnly("bubble: Close() failed: " + ex.Message); }
+        }
+
+        private static bool EquipmentPrefix(EquipmentModeQuickAccess __instance)
+        {
+            if (__instance == null || _ourActionId == 0 || __instance.GetInstanceID() != _ourActionId) return true; // not ours: native behaviour (your real equipment dummy) untouched
+            Diag.Log("bubble: our clone selected -- opening console, native equipment dummy suppressed.");
+            string msg = ConsoleOpener.Toggle();
+            if (msg != null) Mod.Log.Msg(msg);
+            return false; // skip the native Open/Run that spawns the dummy
         }
 
         private static void IgnoredPostfix(QuickAccessMenuAction __instance, ref bool __result)
