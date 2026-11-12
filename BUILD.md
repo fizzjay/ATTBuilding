@@ -501,3 +501,41 @@ Field-check: `Initialize() RAN` vs `still FAILED`, diff of
 `still null post-init:` vs `refnull:`, ours-vs-ref `grabprobe:`
 verdicts at close hand range, and whether `docked=` finally reads
 False.
+
+## 0.4.16 learn from a native item; stop inventing bestGrab; freeze pieces
+
+0.4.15 + user ground truth split the problem decisively:
+
+- `Initialize() RAN`, post-init nulls match a real Pickup, and the
+  game's own scoring invoked directly says yes to everything
+  (`allowed=True assess=True`). Yet the user could grab ONLY the
+  Stick -- the one object whose Pickup shipped in its prefab. So our
+  added Pickups fail at candidate DISCOVERY (the hand never presents
+  them), and station prefabs (Anvil/Map Board/Trade Deck) presumably
+  don't present item-style colliders to the hand's scan.
+- Our points score ~827k == the hand's squared distance from the
+  world ORIGIN: the winning point evaluates at (0,0,0). Prime
+  suspect: hydration invented `bestGrab` as an empty GrabPoint
+  (native Pickups keep it null until scored -- see `refnull:`).
+  0.4.16 stops hydrating `bestGrab`/`BestGrab`/`dockedMemory*`, and
+  sets GrabPoint members by direct assignment (`gp.position = ...`;
+  fields on Mono, auto-props on IL2CPP) instead of the reflected
+  setter path that silently no-ops on a miss.
+- New: `DumpObjectProfile` (ours vs native: root/collider layers,
+  trigger flags, rigidbody, every GrabPoint member value) and
+  `CaptureNativeTemplate` -- the first tracked prefab-native Pickup
+  donates its collider layers + GrabPoint design values, which are
+  then applied to our pieces, retroactively (layers re-set, surface
+  points rebuilt from the template) when the template arrives late.
+- `DumpInteractorMembers` (debug file, `imember:`) lists where an
+  Interactor keeps its state, guiding a candidate-list probe next.
+- A dynamic Map Board fell through the world: `FreezeBody` makes
+  pieces we lend a Pickup to kinematic (the console has been
+  grabbable-while-kinematic since 0.4.2).
+- Poller state no longer includes handDist (the 0.4.15 log flood).
+
+Field-check: `profile ours:` vs `profile native:` (layers + gp0
+members), `native grab template captured`, whether `grabprobe:`
+scores drop from ~827k to single digits, and whether the Anvil
+finally grabs. If it still doesn't, the `imember:` list says where
+the hand's candidate list lives for a direct read next round.

@@ -314,6 +314,21 @@ def test_grab_pipeline_instrumented():
         assert "InvokeProbe(pickup, \"AssessScore\"" in s, f
         assert "refnull" in s, f
         assert 'SafeMember(pickup, "IsInteractable")' in s, f
+        # 0.4.16: direct scoring says grabbable, yet only prefab-native
+        # Pickups grab -- so learn from a native one: profile ours vs
+        # native (collider layers / GrabPoint members), capture its
+        # GrabPoint design values + layers as a template, retrofit ours.
+        assert "DumpObjectProfile" in s, f
+        assert "CaptureNativeTemplate(go, pickup)" in s, f
+        assert "CopyGrabPointTemplate(gp)" in s, f
+        assert "ApplyNativeTemplateTo(go, pickup)" in s, f
+        assert "gp.position = p" in s, f
+        assert "DumpInteractorMembers(hand)" in s, f
+        # never hydrate bestGrab/dockedMemory: null natively, and an
+        # invented empty GrabPoint evaluates at the world origin
+        assert '"bestGrab", "BestGrab", "dockedMemoryLeft", "dockedMemoryRight"' in s, f
+        # dynamic station pieces fell through the world: freeze ours
+        assert "FreezeBody(go, pickup)" in s, f
         assert "DumpGrabSignatures(pickup)" in s, f
         assert "sig: " in s, f
         # ... and Pickup.Colliders (populated by Awake, which ran too early)
@@ -331,7 +346,7 @@ def test_grab_pipeline_instrumented():
         assert "pickup.enabled = true" in s, f
         assert "hasNetEntity=" in s, f
     for f in ("quest/Main.cs", "pchost/Main.cs"):
-        assert 'Version = "0.4.15"' in read(f), f
+        assert 'Version = "0.4.16"' in read(f), f
 
 
 if __name__ == "__main__":

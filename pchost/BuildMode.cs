@@ -97,6 +97,11 @@ namespace ATTBuilding
                     try { if (!pickup.enabled) { pickup.enabled = true; Diag.Log("buildmode: re-enabled Pickup on '" + go.name + "' after Initialize."); } } catch { }
                     if (!_nullsDumped2) { _nullsDumped2 = true; DumpNullMembers(pickup, "still null post-init"); }
                 }
+                if (added) _addedIds.Add(go.GetInstanceID());
+                if (added) FreezeBody(go, pickup);
+                DumpObjectProfile(added ? "ours" : "native", go, pickup);
+                if (!added) CaptureNativeTemplate(go, pickup);
+                if (added) ApplyNativeTemplateTo(go, pickup);
                 try
                 {
                     Diag.Log("buildmode: grabbable '" + go.name + "': pickup " + (added ? "ADDED" : "already present")
@@ -176,10 +181,18 @@ namespace ATTBuilding
             foreach (var p in positions)
             {
                 var gp = new GrabPoint();
+                // Start from a real point's design values when a native
+                // template has been captured (0.4.16) -- editor defaults
+                // we never saw may be load-bearing -- then impose the
+                // whole-mesh layout on top. (Direct assignment: these
+                // are fields on Mono, auto-properties on IL2CPP; the
+                // reflected TrySet path silently no-oped before, which
+                // left every point at the origin with default flags.)
+                if (_gpTemplateValues != null) CopyGrabPointTemplate(gp);
                 gp.rotationMode = RotationMode.Surface;
-                TrySet(gp, "position", p);
-                TrySet(gp, "poleForward", ext);
-                TrySet(gp, "isIgnoringAngle", true);
+                gp.position = p;
+                gp.poleForward = ext;
+                gp.isIgnoringAngle = true;
                 WireGrabPoint(gp, pickup);
                 made.Add(gp);
             }
@@ -202,7 +215,9 @@ namespace ATTBuilding
         {
             bool wired = TrySetMemberWalk(gp, "transform", pickup.transform);
             if (!wired) wired = TrySet(gp, "transform", pickup.transform);
-            TrySet(gp, "isUsingLocal", true);
+            // A captured native template already dictated isUsingLocal;
+            // only force local space while we are still guessing.
+            if (_gpTemplateValues == null) TrySet(gp, "isUsingLocal", true);
             HydrateGraph(gp, HydrateSkip, null);
             if (!_wireLogged) { _wireLogged = true; Diag.Log("buildmode: GrabPoint transform wired=" + wired + " (19 surface points)"); }
         }
@@ -332,6 +347,12 @@ namespace ATTBuilding
             "entity", "Entity", "transform", "gameObject", "rigidbody",
             "networkRigidbody", "grabPoints", "childrenColliders", "Colliders",
             "IsGrabbed", "IsDocked",
+            // 0.4.16: null on a real Pickup until the game itself scores
+            // a grab (0.4.15 refnull). Hydrating bestGrab installed an
+            // empty GrabPoint sitting at the world origin -- exactly
+            // where our probe scores (~827k) said the winning point
+            // was. Never invent these.
+            "bestGrab", "BestGrab", "dockedMemoryLeft", "dockedMemoryRight",
         };
 
         private static readonly object Unreadable = new object();
@@ -619,7 +640,7 @@ namespace ATTBuilding
                         + " canInteract=" + SafeMember(pickup, "IsInteractable")
                         + " netwk=" + SafeMember(pickup, "IsNetworked")
                         + " chan=" + SafeMember(pickup, "Channels")
-                        + " handDist=" + (nearest < 0f ? "n/a" : (Mathf.Round(nearest * 4f) / 4f).ToString("0.00"));
+                        + "";
                     if (nearestHand != null && nearest >= 0f && nearest <= 0.8f && now >= _probeNext)
                     {
                         _probeNext = now + 2f;
@@ -715,6 +736,7 @@ namespace ATTBuilding
         // and the exception names the missing state.
         private static void ProbeGrab(Pickup pickup, Interactor hand, string tag)
         {
+            DumpInteractorMembers(hand);
             try
             {
                 Diag.Log("grabprobe " + tag + ": allowed=" + InvokeProbe(pickup, "CheckInteractAllowedAndReplace", new object[] { hand })
@@ -749,6 +771,183 @@ namespace ATTBuilding
                 var inner = ex is System.Reflection.TargetInvocationException && ex.InnerException != null ? ex.InnerException : ex;
                 return "EX " + inner.GetType().Name;
             }
+        }
+
+
+        // ---------------------------------------------------------------
+        // 0.4.16 native template: the first tracked object whose Pickup
+        // came WITH its prefab (e.g. a spawned Stick) is ground truth for
+        // how a grabbable thing presents itself -- collider layers for
+        // the hand's discovery scan, and a real GrabPoint's serialized
+        // design values. Dump ours-vs-native profiles, capture that
+        // template, and retrofit it onto every Pickup we added.
+        private static readonly System.Collections.Generic.HashSet<int> _addedIds = new System.Collections.Generic.HashSet<int>();
+        private static bool _templateCaptured;
+        private static int _templateRootLayer = -1;
+        private static int _templateColliderLayer = -1;
+        private static System.Collections.Generic.Dictionary<string, object> _gpTemplateValues;
+        private static bool _templateAppliedLogged;
+        private static bool _ourProfileDumped;
+        private static bool _nativeProfileDumped;
+        private static bool _interactorDumped;
+
+        private static readonly string[] GrabPointTemplateMembers =
+        {
+            "position", "rotationEuler", "linear", "poleForward", "offset",
+            "rotationMode", "isUsingLocal", "isIgnoringAngle", "isDisabled",
+            "thumbPosition", "refuseMultipleHands", "dockedRestriction",
+            "nonDockedRestriction", "isSetupWithLeft",
+        };
+
+        private static string FormatValue(object v)
+        {
+            if (v == null) return "null";
+            if (v is Vector3) { var t = (Vector3)v; return "(" + t.x.ToString("0.##") + "," + t.y.ToString("0.##") + "," + t.z.ToString("0.##") + ")"; }
+            if (v is Quaternion) { var e = ((Quaternion)v).eulerAngles; return "euler(" + e.x.ToString("0.#") + "," + e.y.ToString("0.#") + "," + e.z.ToString("0.#") + ")"; }
+            if (v is float) return ((float)v).ToString("0.###");
+            if (v is string) return (string)v;
+            if (v is System.Collections.IEnumerable) return "<" + v.GetType().Name + ">";
+            if (v is UnityEngine.Object) return ((UnityEngine.Object)v).name + " <" + v.GetType().Name + ">";
+            return v.ToString();
+        }
+
+        // One-shot per kind: how does this object present itself to the
+        // physics/interaction world, ours (Pickup added by us) vs native
+        // (Pickup shipped in the prefab)?
+        private static void DumpObjectProfile(string tag, GameObject go, Pickup pickup)
+        {
+            if (tag == "ours") { if (_ourProfileDumped) return; _ourProfileDumped = true; }
+            else { if (_nativeProfileDumped) return; _nativeProfileDumped = true; }
+            try
+            {
+                Diag.Log("profile " + tag + ": '" + go.name + "' rootLayer=" + go.layer + " (" + LayerMask.LayerToName(go.layer) + ")"
+                    + " rbKinematic=" + Safe(() => pickup.Rigidbody != null && pickup.Rigidbody.isKinematic)
+                    + " rbDetect=" + Safe(() => pickup.Rigidbody == null ? "norb" : pickup.Rigidbody.detectCollisions.ToString())
+                    + " isNetworked=" + SafeMember(pickup, "IsNetworked"));
+                int shown = 0;
+                foreach (var col in go.GetComponentsInChildren<Collider>())
+                {
+                    if (col == null) continue;
+                    if (++shown > 10) break;
+                    Diag.Log("profile " + tag + ": collider '" + col.name + "' layer=" + col.gameObject.layer + " (" + LayerMask.LayerToName(col.gameObject.layer) + ") trigger=" + col.isTrigger + " enabled=" + col.enabled);
+                }
+                var points = pickup.GrabPoints;
+                if (points != null && points.Length > 0 && points[0] != null)
+                {
+                    foreach (var slot in GraphMembers(points[0].GetType()))
+                    {
+                        var v = slot.Read(points[0]);
+                        if (v == Unreadable) continue;
+                        Diag.Log("profile " + tag + ": gp0 " + slot.Declaring + "." + slot.Name + " = " + FormatValue(v));
+                    }
+                }
+            }
+            catch (Exception ex) { Diag.Log("profile " + tag + " failed: " + ex.Message); }
+        }
+
+        private static void CaptureNativeTemplate(GameObject go, Pickup pickup)
+        {
+            if (_templateCaptured) return;
+            if (_addedIds.Contains(go.GetInstanceID())) return; // ours, misread as native on a re-run
+            try
+            {
+                var colliders = go.GetComponentsInChildren<Collider>();
+                if (colliders == null || colliders.Length == 0) return;
+                var points = pickup.GrabPoints;
+                if (points == null || points.Length == 0 || points[0] == null) return;
+                _templateRootLayer = go.layer;
+                _templateColliderLayer = colliders[0].gameObject.layer;
+                var values = new System.Collections.Generic.Dictionary<string, object>();
+                foreach (var slot in GraphMembers(points[0].GetType()))
+                {
+                    if (System.Array.IndexOf(GrabPointTemplateMembers, slot.Name) < 0) continue;
+                    var v = slot.Read(points[0]);
+                    if (v == Unreadable) continue;
+                    values[slot.Name] = v;
+                }
+                _gpTemplateValues = values;
+                _templateCaptured = true;
+                Diag.Log("buildmode: native grab template captured from '" + go.name + "' (rootLayer=" + _templateRootLayer + " (" + LayerMask.LayerToName(_templateRootLayer) + ")"
+                    + ", colliderLayer=" + _templateColliderLayer + " (" + LayerMask.LayerToName(_templateColliderLayer) + ")"
+                    + ", gpMembers=" + values.Count + ") -- retrofitting our spawned pieces.");
+                foreach (int id in TrackedRegistry.Snapshot())
+                {
+                    if (!_addedIds.Contains(id)) continue;
+                    var other = Spawner.FindByInstanceId(id);
+                    if (other == null) continue;
+                    var otherPickup = other.GetComponentInChildren<Pickup>();
+                    if (otherPickup == null) continue;
+                    ApplyNativeTemplateTo(other, otherPickup);
+                    InstallSurfaceGrabPoints(other, otherPickup);
+                    Diag.Log("buildmode: retrofitted '" + other.name + "' with the native grab template.");
+                }
+            }
+            catch (Exception ex) { Diag.Log("buildmode: native template capture failed: " + ex.Message); }
+        }
+
+        private static void CopyGrabPointTemplate(GrabPoint gp)
+        {
+            foreach (var slot in GraphMembers(gp.GetType()))
+            {
+                object v;
+                if (!_gpTemplateValues.TryGetValue(slot.Name, out v)) continue;
+                if (v == null && slot.MemberType.IsValueType) continue;
+                if (v != null && !slot.MemberType.IsInstanceOfType(v)) continue;
+                slot.Write(gp, v);
+            }
+        }
+
+        private static void ApplyNativeTemplateTo(GameObject go, Pickup pickup)
+        {
+            if (!_templateCaptured) return;
+            try
+            {
+                go.layer = _templateRootLayer;
+                foreach (var col in go.GetComponentsInChildren<Collider>())
+                    if (col != null) col.gameObject.layer = _templateColliderLayer;
+                if (!_templateAppliedLogged) { _templateAppliedLogged = true; Diag.Log("buildmode: native layers applied to '" + go.name + "' (root=" + _templateRootLayer + ", colliders=" + _templateColliderLayer + ")."); }
+            }
+            catch { }
+        }
+
+        // Building pieces are placed, not physics toys: a dynamic station
+        // board fell through the world in the 0.4.15 session. Freeze
+        // pieces we lend a Pickup to; the game's grab machinery drives
+        // kinematic bodies while held (the console has worked this way
+        // since 0.4.2).
+        private static void FreezeBody(GameObject go, Pickup pickup)
+        {
+            try
+            {
+                var rb = pickup.Rigidbody != null ? pickup.Rigidbody : go.GetComponent<Rigidbody>();
+                if (rb != null && !rb.isKinematic)
+                {
+                    rb.isKinematic = true;
+                    rb.detectCollisions = true;
+                    Diag.Log("buildmode: froze '" + go.name + "' in place (kinematic).");
+                }
+            }
+            catch { }
+        }
+
+        // One-shot (debug file): where would an Interactor keep its
+        // candidates? Names guide the next probe -- no guessing.
+        private static void DumpInteractorMembers(Interactor hand)
+        {
+            if (_interactorDumped) return;
+            _interactorDumped = true;
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly;
+            int shown = 0;
+            for (var t = hand.GetType(); t != null && t != typeof(object) && shown < 150; t = t.BaseType)
+            {
+                try
+                {
+                    foreach (var f in t.GetFields(flags)) { if (++shown > 150) break; Diag.FileOnly("imember: " + t.Name + "." + f.Name + " : " + f.FieldType.Name); }
+                    foreach (var p in t.GetProperties(flags)) { if (++shown > 150) break; Diag.FileOnly("imember: " + t.Name + "." + p.Name + " : " + p.PropertyType.Name + " (prop)"); }
+                }
+                catch { }
+            }
+            Diag.Log("buildmode: Interactor member list dumped to the debug file (imember:).");
         }
 
         // The ShardClient Readout pattern: scan the local player's hands.
