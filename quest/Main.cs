@@ -21,6 +21,7 @@ namespace ATTBuildingQuest
                 Crumb.Init(Mod.DataDir);
                 Settings.Load();
                 Diag.Init(Mod.DataDir, "Quest IL2CPP");
+                PrefabNicks.Init(Mod.DataDir); PrefabNicks.Log = Diag.Log;
                 Diag.Log("init: bubble " + (Mod.BubbleEnabled ? "on" : "OFF (pref)") + ", console " + (Mod.ConsoleEnabled ? "on" : "OFF (pref)"));
                 var harmony = new HarmonyLib.Harmony("attbuilding");
                 if (Mod.ConsoleEnabled) Mod.Log.Msg(ConsoleHook.Apply(harmony)); else Mod.Log.Msg("console: OFF (pref) -- hooks skipped.");
@@ -49,7 +50,7 @@ namespace ATTBuildingQuest
 
     internal static class Mod
     {
-        internal const string Version = "0.4.5";
+        internal const string Version = "0.4.6";
         internal static bool BubbleEnabled = true;
         internal static bool ConsoleEnabled = true;
         internal static bool SuppressDummy = true;

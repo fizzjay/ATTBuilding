@@ -294,3 +294,17 @@ Nicknames: `build nick <player name|id> <nickname>` saves
 `build del nick <nickname>` removes one. Saved nicknames resolve anywhere
 a player token is accepted (spawn routing, `build nick` itself), and all
 changes ride the direct channel and are logged server-side.
+
+## 0.4.6 prefab nicknames (corrected)
+
+0.4.5's nicknames targeted players; the actual ask is prefab shortcuts:
+`build nick anvil anv`, then `spawn anv`. Reworked accordingly -- the
+server-side player-nickname registry and its BuildNet kinds are removed.
+Nicknames are personal and client-side: `shared/PrefabNicks.cs` saves
+`nickname=hash|Prefab Name` to your own `UserData/ATTBuilding/nicks.txt`,
+and `Spawner.Resolve` consults them after exact prefab names/IDs but
+before substring matching (so a nickname beats ambiguous partials). The
+prefab name may be multi-word (`build nick weapon rack wall rack`); the
+nickname is always the last word, one token, never a pure number, and may
+not shadow a real prefab name. `build nicks` lists them. The 0.4.5
+chunk-assignment fix for invisible spawns is unchanged.

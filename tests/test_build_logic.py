@@ -24,17 +24,17 @@ def test_quantize_guarantees_straight_angles():
 
 def test_parser_commands_exist_in_both_platforms():
     parser = read("shared/CommandParser.cs")
-    for verb in ('"spawn"', '"ping"', '"nick"', '"del"', '"mode"', '"snapping"', '"snapangle"', '"grid"', '"list"', '"spawned"', '"clear"', '"help"'):
+    for verb in ('"spawn"', '"ping"', '"nick"', '"nicks"', '"del"', '"mode"', '"snapping"', '"snapangle"', '"grid"', '"list"', '"spawned"', '"clear"', '"help"'):
         assert verb in parser, verb
     for platform in ("pchost", "quest"):
         hook = read(f"{platform}/ConsoleHook.cs")
-        for kind in ("CommandKind.Spawn", "CommandKind.ServerPing", "CommandKind.Nick", "CommandKind.DelNick", "CommandKind.BuildMode", "CommandKind.Snapping",
+        for kind in ("CommandKind.Spawn", "CommandKind.ServerPing", "CommandKind.Nick", "CommandKind.DelNick", "CommandKind.Nicks", "CommandKind.BuildMode", "CommandKind.Snapping",
                      "CommandKind.SnapAngle", "CommandKind.Grid", "CommandKind.Clear"):
             assert kind in hook, (platform, kind)
 
 def test_both_projects_link_identical_shared_files():
     shared = {p.name for p in (ROOT / "shared").glob("*.cs")}
-    assert shared == {"BuildState.cs", "CommandParser.cs", "SnapMath.cs", "TrackedRegistry.cs", "VectorSnap.cs"}
+    assert shared == {"BuildState.cs", "CommandParser.cs", "PrefabNicks.cs", "SnapMath.cs", "TrackedRegistry.cs", "VectorSnap.cs"}
     for proj in ("pchost/ATTBuilding.csproj", "quest/ATTBuilding.csproj"):
         text = read(proj)
         for name in shared:
@@ -125,16 +125,25 @@ def test_reported_build_errors_stay_fixed():
         assert spawner.index("BuildNet.SendSpawn") < spawner.index("NetRoute.Send")  # direct first, Alta fallback
     assert "BuildNet.cs" in read("pchost/ATTBuilding.csproj") and "BuildNet.cs" in read("quest/ATTBuilding.csproj")
     assert "SpawnForPlayer" in read("pchost/ServerCommands.cs") and "BuildNet.Install" in read("quest/Main.cs")
-    # Nicknames + invisible-spawn fix (0.4.5): the native spawn command
-    # assigns entity.Chunk after SpawnHelper.Spawn and we now match it;
-    # nicknames persist server-side in nicks.txt and resolve in FindPlayer.
+    # Invisible-spawn fix (0.4.5): the native spawn command assigns
+    # entity.Chunk after SpawnHelper.Spawn and we now match it.
     assert "LocationChunkHelper.GetBestContaining" in read("pchost/ServerCommands.cs")
     assert "LocationChunkHelper.GetBestContaining" in read("pchost/Spawner.cs")
-    assert "nicks.txt" in read("pchost/ServerCommands.cs") and "SetNickByToken" in read("pchost/ServerCommands.cs")
-    assert "Text2" in read("shared/CommandParser.cs")
+    # Prefab nicknames (0.4.6, corrected semantics): 'build nick anvil anv'
+    # then 'spawn anv'. Personal + client-side (shared PrefabNicks, saved in
+    # nicks.txt on your own machine), consulted by Resolve on both platforms
+    # after exact names/IDs but before substring matching. The 0.4.5
+    # player-nickname server path is gone.
+    nicks = read("shared/PrefabNicks.cs")
+    assert "nicks.txt" in nicks and "TryGet" in nicks and "Validate" in nicks
+    parser = read("shared/CommandParser.cs")
+    assert "Text2 = words[words.Length - 1]" in parser  # nickname is the last word; prefab names may be multi-word
+    assert "SetNickByToken" not in read("pchost/ServerCommands.cs")
     for proj in ("pchost", "quest"):
-        assert "SendNickSet" in read(f"{proj}/BuildNet.cs") and "SendNickDel" in read(f"{proj}/BuildNet.cs")
-        assert "SetNick" in read(f"{proj}/Spawner.cs") and "DeleteNick" in read(f"{proj}/Spawner.cs")
+        assert "SendNickSet" not in read(f"{proj}/BuildNet.cs") and "SendNickDel" not in read(f"{proj}/BuildNet.cs")
+        spawner = read(f"{proj}/Spawner.cs")
+        assert "PrefabNicks.TryGet" in spawner and "PrefabNicks.Set" in spawner and "PrefabNicks.Delete" in spawner
+        assert spawner.index("PrefabNicks.TryGet") < spawner.index("partials == 1")  # nick beats substring ambiguity
     # Console flight fix: it must be a locked panel, not a loose
     # zero-gravity physics body. It only unlocks while a local hand is
     # actually interacting with its Pickup, then freezes on release.
@@ -201,7 +210,7 @@ def test_reported_build_errors_stay_fixed():
     # ever looped through the NativeSnapshot copy (ArmorUpdate pattern).
     quest_spawner = read("quest/Spawner.cs")
     assert "in PrefabManager.AllPrefabs)" not in quest_spawner
-    assert quest_spawner.count("NativeSnapshot.Items(PrefabManager.AllPrefabs)") == 2
+    assert quest_spawner.count("NativeSnapshot.Items(PrefabManager.AllPrefabs)") == 3  # Resolve, nickname-by-hash, ListMatching
     assert "NativeSnapshot.cs" in read("quest/ATTBuilding.csproj")
     # ConvertDelegate<T> wants the IL2CPP delegate type, not System.Action.
     assert "ConvertDelegate<Il2CppSystem.Action<string, string>>" in quest_spawner

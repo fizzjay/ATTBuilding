@@ -14,6 +14,8 @@ Console** bubble. That summons the game's console in front of you. Type:
 | Command | Effect |
 |---|---|
 | `build spawn <prefab name> [count]` (or just `spawn <name>`) | Spawns that prefab on the ground in front of you. Names match `PrefabManager` prefabs, case-insensitively; a hash works too. |
+| `build nick <prefab name\|id> <nickname>` | Saves a personal nickname for a prefab, e.g. `build nick anvil anv` -- then `spawn anv` spawns an Anvil. Nicknames live in `UserData/ATTBuilding/nicks.txt` on your own machine and work anywhere you play. |
+| `build nicks` / `build del nick <nickname>` | List your saved prefab nicknames / delete one. |
 | `build mode on` / `buildmode on` | **Build mode**: anything *this console spawned* can be grabbed and moved exactly like an item. World items are never touched. |
 | `snapping true` / `snapping false` | While you move a spawned object, its rotation is locked to set angles, so it stays straight — you can still point it any way, just on the angle steps. |
 | `build snapangle <deg>` | Angle step (default `15`; `45` is coarser, `0` disables rotation snapping). |

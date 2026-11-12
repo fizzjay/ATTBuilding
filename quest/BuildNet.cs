@@ -26,8 +26,6 @@ namespace ATTBuildingQuest
         private const uint KindSpawn = 1;
         private const uint KindReply = 2;
         private const uint KindPing = 3;
-        private const uint KindNickSet = 4;
-        private const uint KindNickDel = 5;
 
         internal static Connection ToServer;
         private static int _nextRequest = 1;
@@ -89,29 +87,6 @@ namespace ATTBuildingQuest
             {
                 uint kind = KindPing; s.SerializeBits(ref kind, 8);
                 int r = req; s.SerializeInteger(ref r);
-            }, req);
-        }
-
-        internal static bool SendNickSet(string target, string nickname)
-        {
-            int req = _nextRequest++;
-            return Send("nick set #" + req, delegate(Stream s)
-            {
-                uint kind = KindNickSet; s.SerializeBits(ref kind, 8);
-                int r = req; s.SerializeInteger(ref r);
-                string a = target ?? ""; s.SerializeString(ref a, (Stream.StringEncoding)1);
-                string b = nickname ?? ""; s.SerializeString(ref b, (Stream.StringEncoding)1);
-            }, req);
-        }
-
-        internal static bool SendNickDel(string nickname)
-        {
-            int req = _nextRequest++;
-            return Send("nick delete #" + req, delegate(Stream s)
-            {
-                uint kind = KindNickDel; s.SerializeBits(ref kind, 8);
-                int r = req; s.SerializeInteger(ref r);
-                string a = nickname ?? ""; s.SerializeString(ref a, (Stream.StringEncoding)1);
             }, req);
         }
 

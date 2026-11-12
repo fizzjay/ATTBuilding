@@ -3,12 +3,12 @@ using System.Globalization;
 
 namespace ATTBuilding
 {
-    public enum CommandKind { None, Help, Spawn, ServerPing, Nick, DelNick, BuildMode, Snapping, SnapAngle, Grid, LivePositionSnap, List, Spawned, Clear, Unknown }
+    public enum CommandKind { None, Help, Spawn, ServerPing, Nick, DelNick, Nicks, BuildMode, Snapping, SnapAngle, Grid, LivePositionSnap, List, Spawned, Clear, Unknown }
 
     public sealed class ParsedCommand
     {
         public CommandKind Kind;
-        public string Text = "";      // prefab name / list filter / nick target
+        public string Text = "";      // prefab name / list filter / prefab ref (Nick) / nickname (DelNick)
         public string Text2 = "";     // nickname (for Nick)
         public float Number;          // count, angle, grid
         public bool Flag;             // on/off value
@@ -84,13 +84,16 @@ namespace ATTBuilding
             if (verb == "spawned") { result.Kind = CommandKind.Spawned; return result; }
             if (verb == "nick")
             {
-                // build nick <player name|id|saved nickname> <nickname>
+                // build nick <prefab name|id> <nickname> -- the nickname is the
+                // LAST word; the prefab name may be several words, e.g.
+                // build nick weapon rack wall rack   /   build nick anvil anv
                 result.Kind = CommandKind.Nick;
-                if (i + 2 >= words.Length) { result.Kind = CommandKind.Unknown; result.Error = "Usage: build nick <player name|id> <nickname>"; return result; }
-                result.Text = words[i + 1];
-                result.Text2 = Join(words, i + 2, words.Length);
+                if (i + 2 >= words.Length) { result.Kind = CommandKind.Unknown; result.Error = "Usage: build nick <prefab name|id> <nickname>  e.g. build nick anvil anv"; return result; }
+                result.Text = Join(words, i + 1, words.Length - 1);
+                result.Text2 = words[words.Length - 1];
                 return result;
             }
+            if (verb == "nicks") { result.Kind = CommandKind.Nicks; return result; }
             if (verb == "delnick" || (verb == "del" && i + 1 < words.Length && Is(words[i + 1], "nick")))
             {
                 // build del nick <nickname>   (also: build delnick <nickname>)
@@ -120,8 +123,9 @@ namespace ATTBuilding
             "build list [filter] - loaded prefab names you can spawn",
             "build spawned - how many console-spawned objects are tracked for build mode",
             "build ping - ask the server whether ATTBuilding is installed/registered there (reply shows its version)",
-            "build nick <player name|id> <nickname> - save a nickname for a player on the server (saved in nicks.txt; nicknames work anywhere a player is named)",
-            "build del nick <nickname> - delete a saved nickname",
+            "build nick <prefab name|id> <nickname> - save a short nickname for a prefab, e.g. build nick anvil anv (then: spawn anv)",
+            "build nicks - list your saved prefab nicknames (saved in nicks.txt on this machine)",
+            "build del nick <nickname> - delete a saved prefab nickname",
             "build clear - remove every console-spawned object",
         };
 

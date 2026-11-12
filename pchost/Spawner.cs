@@ -32,6 +32,16 @@ namespace ATTBuilding
                 if (candidate.IndexOf(wanted, StringComparison.OrdinalIgnoreCase) >= 0) { partial = prefab; partials++; }
             }
             if (exact != null) return exact;
+            // Your saved prefab nicknames (build nick anvil anv -> spawn anv).
+            // Checked after real names/IDs but before substring matching, so a
+            // nickname always wins over ambiguous partial matches.
+            string nickHash, nickName;
+            if (PrefabNicks.TryGet(wanted, out nickHash, out nickName))
+            {
+                foreach (NetworkPrefab prefab in PrefabManager.AllPrefabs) { if (prefab != null && prefab.Hash.ToString() == nickHash) return prefab; }
+                error = "Your nickname '" + wanted + "' points at '" + nickName + "' [" + nickHash + "] but that prefab isn't loaded here. Remove it: build del nick " + wanted;
+                return null;
+            }
             if (partials == 1) return partial;
             if (partials > 1) { error = "'" + wanted + "' matches " + partials + " prefabs. Be more specific (see: build list " + wanted + ")."; return null; }
             error = "No prefab matching '" + wanted + "'. See: build list";
@@ -85,22 +95,40 @@ namespace ATTBuilding
                 : "Spawn failed (server refused or prefab cannot be spawned here).");
         }
 
-internal static void SetNick(string target, string nickname, Action<string> print)
+        internal static void SetNick(string prefabRef, string nickname, Action<string> print)
         {
-            Diag.Log("nick: set '" + nickname + "' for '" + target + "' authority[" + AuthorityDescription() + "]");
-            if (HasAuthority()) { print(ServerCommands.NickLocal(target, nickname)); return; }
-            if (BuildNet.SendNickSet(target, nickname)) { print("Asking the server to save nickname '" + nickname + "' for '" + target + "' ..."); ConsoleHook.BeginWait(print, "build nick " + target + " " + nickname + " [direct]"); }
-            else if (NetRoute.Send("build nick " + target + " " + nickname, print)) { ConsoleHook.BeginWait(print, "build nick " + target + " " + nickname); }
-            else print("Could not reach the server to save that nickname.");
+            string error;
+            if (!PrefabNicks.Validate(nickname, out error)) { print(error); return; }
+            // A nickname may not shadow a real prefab name: exact names win in
+            // Resolve, so the nickname would never fire.
+            NetworkPrefab shadow = Resolve(nickname, out error);
+            if (shadow != null && string.Equals(Clean(shadow.name), nickname.Trim(), StringComparison.OrdinalIgnoreCase))
+            { print("'" + nickname + "' is already a real prefab name -- no nickname needed (spawn " + nickname + " works as-is)."); return; }
+            NetworkPrefab prefab = Resolve(prefabRef, out error);
+            if (prefab == null) { print("Can't save nickname: " + error); return; }
+            string oldHash, oldName; bool existed = PrefabNicks.TryGet(nickname, out oldHash, out oldName);
+            PrefabNicks.Set(nickname, prefab.Hash.ToString(), Clean(prefab.name));
+            Diag.Log("nicks: saved '" + nickname + "' -> '" + Clean(prefab.name) + "' hash=" + prefab.Hash + (existed ? " (replaced '" + oldName + "')" : ""));
+            print("Nickname saved: spawn " + nickname + " -> " + Clean(prefab.name) + (existed ? " (replaced " + oldName + ")" : "") + ". Saved on this machine in nicks.txt.");
         }
 
         internal static void DeleteNick(string nickname, Action<string> print)
         {
-            Diag.Log("nick: delete '" + nickname + "' authority[" + AuthorityDescription() + "]");
-            if (HasAuthority()) { print(ServerCommands.DelNickLocal(nickname)); return; }
-            if (BuildNet.SendNickDel(nickname)) { print("Asking the server to delete nickname '" + nickname + "' ..."); ConsoleHook.BeginWait(print, "build del nick " + nickname + " [direct]"); }
-            else if (NetRoute.Send("build delnick " + nickname, print)) { ConsoleHook.BeginWait(print, "build delnick " + nickname); }
-            else print("Could not reach the server to delete that nickname.");
+            string prefabName;
+            if (PrefabNicks.Delete(nickname, out prefabName))
+            {
+                Diag.Log("nicks: deleted '" + nickname + "' (was '" + prefabName + "')");
+                print("Nickname deleted: '" + nickname + "' (was " + prefabName + ").");
+            }
+            else print("No nickname '" + nickname + "' saved. See: build nicks");
+        }
+
+        internal static void ListNicks(Action<string> print)
+        {
+            var lines = PrefabNicks.DescribeAll();
+            if (lines.Count == 0) { print("No prefab nicknames saved yet. Save one: build nick <prefab> <nickname>  e.g. build nick anvil anv"); return; }
+            print("Your prefab nicknames (" + lines.Count + "):");
+            foreach (string line in lines) print("  " + line);
         }
 
         internal static void PingServer(Action<string> print)

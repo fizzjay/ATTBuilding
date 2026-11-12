@@ -1,7 +1,6 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.IO;
 using System.Reflection;
 using Alta.Chunks;
 using Alta.Console;
@@ -138,119 +137,6 @@ namespace ATTBuilding
             return result.Replace('\n', ' ').Replace('\r', ' ');
         }
 
-        // ---- Nicknames -------------------------------------------------
-        // Saved in UserData/ATTBuilding/nicks.txt as
-        //   nickname=identifier|username
-        // so they survive restarts and can be hand-edited. Anywhere a
-        // player token is accepted (spawn routing, 'build nick'), a saved
-        // nickname resolves to that player.
-        private static Dictionary<string, string[]> _nicks; // nickname(lower) -> [identifier, username]
-
-        private static string NickFilePath { get { return Path.Combine(Mod.DataDir, "nicks.txt"); } }
-
-        private static Dictionary<string, string[]> LoadNicks()
-        {
-            if (_nicks != null) return _nicks;
-            _nicks = new Dictionary<string, string[]>();
-            try
-            {
-                if (File.Exists(NickFilePath))
-                {
-                    foreach (string line in File.ReadAllLines(NickFilePath))
-                    {
-                        string s = line.Trim();
-                        if (s.Length == 0 || s.StartsWith("#")) continue;
-                        int eq = s.IndexOf('=');
-                        if (eq <= 0) continue;
-                        string nick = s.Substring(0, eq).Trim().ToLowerInvariant();
-                        string[] parts = s.Substring(eq + 1).Split('|');
-                        if (nick.Length > 0 && parts.Length >= 1) _nicks[nick] = new[] { parts[0].Trim(), parts.Length > 1 ? parts[1].Trim() : "" };
-                    }
-                }
-                Diag.FileOnly("nicks: loaded " + _nicks.Count + " nickname(s) from " + NickFilePath);
-            }
-            catch (Exception ex) { Diag.FileOnly("nicks: load failed: " + ex.Message); }
-            return _nicks;
-        }
-
-        private static void SaveNicks()
-        {
-            try
-            {
-                var lines = new List<string> { "# ATTBuilding nicknames: nickname=identifier|username (edit freely; delete a line to remove)" };
-                var keys = new List<string>(LoadNicks().Keys); keys.Sort();
-                foreach (string k in keys) { var v = _nicks[k]; lines.Add(k + "=" + v[0] + "|" + v[1]); }
-                File.WriteAllLines(NickFilePath, lines.ToArray());
-                Diag.FileOnly("nicks: saved " + _nicks.Count + " nickname(s) to " + NickFilePath);
-            }
-            catch (Exception ex) { Diag.Log("nicks: save FAILED: " + ex); }
-        }
-
-        private static bool ValidNickname(string nick)
-        {
-            if (string.IsNullOrEmpty(nick) || nick.Length < 2 || nick.Length > 24) return false;
-            foreach (char c in nick) if (!char.IsLetterOrDigit(c) && c != '_' && c != '-' && c != '.') return false;
-            return true;
-        }
-
-        internal static string SetNickByToken(Player requester, string targetToken, string nickname, out bool ok)
-        {
-            ok = false;
-            string nick = (nickname ?? "").Trim();
-            if (!ValidNickname(nick)) return "FAILED: nickname '" + nickname + "' is invalid (2-24 chars: letters, digits, _ - .)";
-            string why;
-            var target = FindPlayer(targetToken, out why);
-            if (target == null) return "FAILED: " + why;
-            LoadNicks()[nick.ToLowerInvariant()] = new[] { target.UserInfo.Identifier.ToString(), target.UserInfo.Username };
-            SaveNicks();
-            ok = true;
-            string msg = "Saved nickname '" + nick + "' for '" + target.UserInfo.Username + "'#" + target.UserInfo.Identifier
-                + (requester != null && requester.UserInfo != null ? " (set by '" + requester.UserInfo.Username + "')" : "") + ".";
-            Diag.Log("nicks: " + msg);
-            return msg;
-        }
-
-        internal static string DeleteNickByName(Player requester, string nickname, out bool ok)
-        {
-            ok = false;
-            string nick = (nickname ?? "").Trim().ToLowerInvariant();
-            var map = LoadNicks();
-            if (!map.ContainsKey(nick)) return "FAILED: no saved nickname '" + nickname + "'.";
-            map.Remove(nick);
-            SaveNicks();
-            ok = true;
-            string msg = "Deleted nickname '" + nickname + "'"
-                + (requester != null && requester.UserInfo != null ? " (deleted by '" + requester.UserInfo.Username + "')" : "") + ".";
-            Diag.Log("nicks: " + msg);
-            return msg;
-        }
-
-        // Local/server-console entry (also used by PC 'build nick' when this
-        // process IS the server): the requester is whoever runs it locally.
-        internal static string NickLocal(string targetToken, string nickname)
-        {
-            bool ok; return SetNickByToken(null, targetToken, nickname, out ok);
-        }
-
-        internal static string DelNickLocal(string nickname)
-        {
-            bool ok; return DeleteNickByName(null, nickname, out ok);
-        }
-
-        [Command("nick", "Save a nickname for a player: build nick <player name|id|nickname> <nickname>")]
-        public static string Nick(string player, string nickname)
-        {
-            try { bool ok; return SetNickByToken(null, player, nickname, out ok); }
-            catch (Exception ex) { Diag.Log("server nick: EXCEPTION: " + ex); return "ATTBuilding nick failed on the server: " + ex.Message; }
-        }
-
-        [Command("delnick", "Delete a saved nickname: build delnick <nickname> (in-game: build del nick <nickname>)")]
-        public static string DelNick(string nickname)
-        {
-            try { bool ok; return DeleteNickByName(null, nickname, out ok); }
-            catch (Exception ex) { Diag.Log("server delnick: EXCEPTION: " + ex); return "ATTBuilding delnick failed on the server: " + ex.Message; }
-        }
-
         [Command("ping", "Check the server runs ATTBuilding: build ping <player>")]
         public static string Ping(string player)
         {
@@ -354,21 +240,6 @@ namespace ATTBuilding
                 if (candidate == null || candidate.UserInfo == null) continue;
                 if (isId && candidate.UserInfo.Identifier == (int)num) return candidate;
                 if (string.Equals(candidate.UserInfo.Username, text, StringComparison.OrdinalIgnoreCase)) return candidate;
-            }
-            // Saved nicknames resolve too ('build nick <player> <nickname>').
-            string[] saved;
-            if (LoadNicks().TryGetValue(text.ToLowerInvariant(), out saved) && saved != null && saved.Length >= 1)
-            {
-                foreach (IPlayer p in Player.AllPlayers)
-                {
-                    var candidate = p as Player;
-                    if (candidate == null || candidate.UserInfo == null) continue;
-                    int savedId;
-                    if (int.TryParse(saved[0], out savedId) && candidate.UserInfo.Identifier == savedId) return candidate;
-                    if (!string.IsNullOrEmpty(saved[1]) && string.Equals(candidate.UserInfo.Username, saved[1], StringComparison.OrdinalIgnoreCase)) return candidate;
-                }
-                why = "nickname '" + text + "' is saved for '" + (saved.Length > 1 ? saved[1] : saved[0]) + "' but that player is not connected. Server sees: " + DescribePlayers();
-                return null;
             }
             why = "no connected player matching '" + text + "'. Server sees: " + DescribePlayers();
             return null;
