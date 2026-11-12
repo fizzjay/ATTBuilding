@@ -35,18 +35,22 @@ namespace ATTBuildingQuest
                 if (Mod.SuppressDummy)
                 {
                     // Concrete type only (NOT the QuickAccessMenuAction base
-                    // class that crashed on menu-open when patched): divert
-                    // our clone so its native equipment dummy never spawns.
-                    // Open is the MENU-OPEN lifecycle (the controller calls
-                    // it on the remembered action every time the wheel
-                    // opens) -- suppress our clone's Open so no dummy and
-                    // NO console. Run is the actual "user picked this
-                    // bubble" verb -- that one toggles the console.
-                    var open = AccessTools.Method(typeof(EquipmentModeQuickAccess), "Open");
-                    if (open != null) { harmony.Patch(open, prefix: new HarmonyMethod(typeof(Bubble), nameof(EquipmentOpenSuppress))); Diag.FileOnly("bubble: suppress patch on EquipmentModeQuickAccess.Open"); }
-                    var run = AccessTools.Method(typeof(EquipmentModeQuickAccess), "Run");
-                    if (run != null) { harmony.Patch(run, prefix: new HarmonyMethod(typeof(Bubble), nameof(EquipmentPrefix))); _runPatched = true; Diag.FileOnly("bubble: toggle patch on EquipmentModeQuickAccess.Run"); }
-                    else Diag.FileOnly("bubble: EquipmentModeQuickAccess.Run not found; polled activation remains.");
+                    // class that crashed on menu-open when patched), and
+                    // only methods EquipmentModeQuickAccess itself declares.
+                    // Open is the menu-open lifecycle: suppress-only (no
+                    // dummy, NO console). Run is the actual pick: toggle.
+                    PatchDeclared(harmony, "Open", nameof(EquipmentOpenSuppress));
+                    if (PatchDeclared(harmony, "Run", nameof(EquipmentPrefix))) _runPatched = true;
+                    else Diag.FileOnly("bubble: EquipmentModeQuickAccess.Run not patchable; polled activation remains.");
+                    // THE RED BUBBLE: QuickAccessMenuBubble.Run() refuses to
+                    // run an action whose IsValid is false (red/invalid
+                    // tint, no activation). Our clone's native validity is
+                    // tied to the equipment-mode session we suppress, so
+                    // force IsValid=true for OUR INSTANCE ONLY. (In 0.2.0
+                    // the poll bypassed this gate; the Run patch cannot.)
+                    var valid = AccessTools.PropertyGetter(typeof(EquipmentModeQuickAccess), "IsValid");
+                    if (valid != null) { harmony.Patch(valid, postfix: new HarmonyMethod(typeof(Bubble), nameof(ValidPostfix))); Diag.Log("bubble: IsValid forced true for our clone (fixes red/unopenable bubble)."); }
+                    else Diag.FileOnly("bubble: IsValid getter not found on EquipmentModeQuickAccess.");
                 }
                 _installed = true;
                 DumpActionApi();
@@ -152,6 +156,21 @@ namespace ATTBuildingQuest
 
         private static bool _runPatched;
 
+        private static bool PatchDeclared(HarmonyLib.Harmony harmony, string name, string prefix)
+        {
+            var m = AccessTools.Method(typeof(EquipmentModeQuickAccess), name);
+            if (m == null) { Diag.FileOnly("bubble: EquipmentModeQuickAccess." + name + " not found."); return false; }
+            if (m.DeclaringType != typeof(EquipmentModeQuickAccess)) { Diag.FileOnly("bubble: " + name + " is inherited, not declared on EquipmentModeQuickAccess; not patching."); return false; }
+            harmony.Patch(m, prefix: new HarmonyMethod(typeof(Bubble), prefix));
+            Diag.FileOnly("bubble: patched EquipmentModeQuickAccess." + name);
+            return true;
+        }
+
+        private static void ValidPostfix(EquipmentModeQuickAccess __instance, ref bool __result)
+        {
+            if (__instance != null && _ourActionId != 0 && __instance.GetInstanceID() == _ourActionId) __result = true;
+        }
+
         private static bool EquipmentOpenSuppress(EquipmentModeQuickAccess __instance)
         {
             if (__instance == null || _ourActionId == 0 || __instance.GetInstanceID() != _ourActionId) return true; // not ours: native behaviour (your real equipment dummy) untouched
@@ -220,6 +239,7 @@ namespace ATTBuildingQuest
                 Crumb.At("bubble: instantiate template " + template.name);
                 _action = Object.Instantiate(template);
                 _action.name = "ATT Building Console";
+                try { ConsoleHook.SetMember(_action, "displayName", "Building"); } catch { } // DisplayName is get-only over this field
                 _ourActionId = _action.GetInstanceID();
                 Crumb.At("bubble: cloned " + _ourActionId);
             }

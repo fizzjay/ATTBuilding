@@ -204,3 +204,15 @@ dump and state changes in there name the exact member/method involved.
 - **Keyboard reset after each command:** the instant refocus raced the
   keyboard closing; it's now a delayed (0.35 s) panel off/on cycle plus
   input activation, processed from the per-frame tick.
+
+## 0.4.1 red bubble (from the game's own QuickAccessMenuAction source)
+
+`QuickAccessMenuBubble.Run()` refuses an action whose `IsValid` is false
+(that's the red tint), and the EquipmentMode clone's native validity is
+tied to the equipment session we suppress. 0.4.0's `Run` patch therefore
+never fired. 0.4.1 patches the concrete `IsValid` getter with a postfix
+that returns true **only for our clone's instance**, keeps `Open`
+suppress-only and `Run` as the toggle, and only patches methods the
+concrete `EquipmentModeQuickAccess` itself declares (`DeclaringType`
+check, logged). The clone's serialized `displayName` field is also set to
+"Building" (the property is get-only).

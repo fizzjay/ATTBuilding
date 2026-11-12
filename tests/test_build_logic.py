@@ -86,6 +86,14 @@ def test_reported_build_errors_stay_fixed():
         for bad in ("_console.outputBuffer", "_console.outputField", "_console.CopyBufferToOutput()", "rc.logFilter"):
             assert bad not in hook, (proj, bad)
         assert 'GetMember(_console, "outputBuffer")' in hook and 'SetMember(rc, "logFilter", 0)' in hook
+    # Red bubble (game source): QuickAccessMenuBubble.Run() gates on the
+    # action's IsValid, and our suppressed clone reports false. Force it
+    # true for our instance only; only patch concrete-declared methods.
+    for proj in ("pchost", "quest"):
+        bubble = read(f"{proj}/Bubble.cs")
+        assert "ValidPostfix" in bubble and '"IsValid"' in bubble
+        assert "PatchDeclared" in bubble and "DeclaringType" in bubble
+        assert '"displayName", "Building"' in bubble
     # 0.4.0 root causes from live logs:
     # - server spawn needs explicit module registration (ArmorRestored's
     #   CommandService.CommandCollection.Collect in a FirstInitialize seam)

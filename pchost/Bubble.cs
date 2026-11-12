@@ -33,10 +33,11 @@ namespace ATTBuilding
                     var concrete = AccessTools.TypeByName("EquipmentModeQuickAccess");
                     if (concrete != null)
                     {
-                        var open = AccessTools.Method(concrete, "Open");
-                        if (open != null) harmony.Patch(open, prefix: new HarmonyMethod(typeof(Bubble), nameof(EquipmentOpenSuppress)));
-                        var run = AccessTools.Method(concrete, "Run");
-                        if (run != null) { harmony.Patch(run, prefix: new HarmonyMethod(typeof(Bubble), nameof(EquipmentPrefix))); _runPatched = true; }
+                        PatchDeclared(harmony, concrete, "Open", nameof(EquipmentOpenSuppress));
+                        if (PatchDeclared(harmony, concrete, "Run", nameof(EquipmentPrefix))) _runPatched = true;
+                        // Red/unopenable bubble fix: force IsValid for ours.
+                        var valid = AccessTools.PropertyGetter(concrete, "IsValid");
+                        if (valid != null) harmony.Patch(valid, postfix: new HarmonyMethod(typeof(Bubble), nameof(ValidPostfix)));
                     }
                 }
                 _installed = true;
@@ -46,6 +47,20 @@ namespace ATTBuilding
         }
 
         private static bool _runPatched;
+
+        private static bool PatchDeclared(HarmonyLib.Harmony harmony, System.Type concrete, string name, string prefix)
+        {
+            var m = AccessTools.Method(concrete, name);
+            if (m == null || m.DeclaringType != concrete) { Diag.FileOnly("bubble: " + name + " not declared on " + concrete.Name + "; not patching."); return false; }
+            harmony.Patch(m, prefix: new HarmonyMethod(typeof(Bubble), prefix));
+            return true;
+        }
+
+        private static void ValidPostfix(object __instance, ref bool __result)
+        {
+            var obj = __instance as UnityEngine.Object;
+            if (obj != null && _ourActionId != 0 && obj.GetInstanceID() == _ourActionId) __result = true;
+        }
 
         private static bool EquipmentOpenSuppress(object __instance)
         {
@@ -146,7 +161,7 @@ namespace ATTBuilding
             var clone = UnityEngine.Object.Instantiate(template);
             _clone = clone;
             clone.name = "ATT Building Console";
-            try { SetMember(clone, "DisplayName", "Building"); } catch { }
+            try { SetMember(clone, "displayName", "Building"); } catch { } // DisplayName is get-only over this field
             var init = clone.GetType().GetMethod("InitializeForPlayer", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
             if (init != null) init.Invoke(clone, new object[] { local.NetworkPlayer, false });
             AppendTo(menu, menus, clone);
