@@ -160,6 +160,10 @@ def test_reported_build_errors_stay_fixed():
         mode = read(f"{proj}/BuildMode.cs")
         assert "RotationMode.Surface" in mode and "FixupPickupFields" in mode and "childrenColliders" in mode
         assert "ATTBuildingGrabHandle" in read(f"{proj}/ConsoleHook.cs")
+    # Quest BuildMode once declared 'var added = AddComponent(...)' inside
+    # the scope of 'bool added': CS0136 + bool->Component. Keep them apart.
+    assert "var addedComp = go.AddComponent" in read("quest/BuildMode.cs")
+    assert "var added = go.AddComponent" not in read("quest/BuildMode.cs")
     # Console flight fix: it must be a locked panel, not a loose
     # zero-gravity physics body. It only unlocks while a local hand is
     # actually interacting with its Pickup, then freezes on release.

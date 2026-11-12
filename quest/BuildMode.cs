@@ -48,7 +48,7 @@ namespace ATTBuildingQuest
                     // every grab (that was 'cannot pick up the anvils').
                     var body0 = go.GetComponent<Rigidbody>();
                     if (body0 == null) go.AddComponent<Rigidbody>();
-                    var added = go.AddComponent(Il2CppType.Of<Pickup>()); pickup = added == null ? null : added.TryCast<Pickup>(); if (pickup == null) throw new InvalidOperationException("AddComponent<Pickup> returned null");
+                    var addedComp = go.AddComponent(Il2CppType.Of<Pickup>()); pickup = addedComp == null ? null : addedComp.TryCast<Pickup>(); if (pickup == null) throw new InvalidOperationException("AddComponent<Pickup> returned null");
                     added = true;
                 }
                 FixupPickupFields(go, pickup);
