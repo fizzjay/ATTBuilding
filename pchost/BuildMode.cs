@@ -61,13 +61,20 @@ namespace ATTBuilding
         // Fill the fields the editor normally injects ([GetComponent] /
         // [GetComponentsInChildren]) so the game's own checks pass:
         // CheckInteractAllowedAndReplace requires the rigidbody field.
+        private static bool TrySet(object target, string name, object value)
+        {
+            try { ConsoleHook.SetMember(target, name, value); return true; }
+            catch (Exception ex) { Diag.Log("buildmode: set '" + name + "' FAILED: " + ex.Message); return false; }
+        }
+
         private static void FixupPickupFields(GameObject go, Pickup pickup)
         {
             var body = go.GetComponent<Rigidbody>();
             if (body == null) body = pickup.gameObject.GetComponent<Rigidbody>();
-            if (body != null) ConsoleHook.SetMember(pickup, "rigidbody", body);
-            try { ConsoleHook.SetMember(pickup, "childrenColliders", go.GetComponentsInChildren<Collider>()); } catch { }
-            try { var nrb = go.GetComponent<NetworkRigidbody>(); if (nrb != null) ConsoleHook.SetMember(pickup, "networkRigidbody", nrb); } catch { }
+            if (body != null) TrySet(pickup, "rigidbody", body);
+            else Diag.Log("buildmode: NO rigidbody found for '" + go.name + "' (grabs will be refused).");
+            TrySet(pickup, "childrenColliders", go.GetComponentsInChildren<Collider>());
+            try { var nrb = go.GetComponent<NetworkRigidbody>(); if (nrb != null) TrySet(pickup, "networkRigidbody", nrb); } catch { }
         }
 
         // 'Grab the surface' (the ArmorSurfaceGrip idea, using the game's own
@@ -80,12 +87,12 @@ namespace ATTBuilding
             Bounds bounds = LocalBounds(go, pickup.transform);
             var gp = new GrabPoint();
             gp.rotationMode = RotationMode.Surface;
-            ConsoleHook.SetMember(gp, "position", bounds.center);
+            TrySet(gp, "position", bounds.center);
             var ext = bounds.extents;
             ext = new Vector3(Mathf.Max(ext.x, 0.03f), Mathf.Max(ext.y, 0.03f), Mathf.Max(ext.z, 0.03f));
-            ConsoleHook.SetMember(gp, "poleForward", ext);
-            ConsoleHook.SetMember(gp, "isIgnoringAngle", true);
-            ConsoleHook.SetMember(pickup, "grabPoints", new GrabPoint[] { gp });
+            TrySet(gp, "poleForward", ext);
+            TrySet(gp, "isIgnoringAngle", true);
+            TrySet(pickup, "grabPoints", new GrabPoint[] { gp });
             Diag.FileOnly("buildmode: surface grab point on '" + go.name + "' centre=" + bounds.center + " extents=" + ext);
         }
 

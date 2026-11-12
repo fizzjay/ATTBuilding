@@ -161,9 +161,21 @@ namespace ATTBuildingQuest
             const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
             var type = target.GetType();
             var prop = type.GetProperty(name, flags);
-            if (prop != null && prop.CanWrite) { prop.SetValue(target, ConvertTo(prop.PropertyType, value), null); return; }
+            if (prop != null && prop.CanWrite)
+            {
+                // Direct first: Convert.ChangeType throws 'Object must
+                // implement IConvertible' for IL2CPP array/struct wrapper
+                // types that reflection would have accepted as-is.
+                try { prop.SetValue(target, value, null); }
+                catch { prop.SetValue(target, ConvertTo(prop.PropertyType, value), null); }
+                return;
+            }
             var field = type.GetField(name, flags);
-            if (field != null) field.SetValue(target, ConvertTo(field.FieldType, value));
+            if (field != null)
+            {
+                try { field.SetValue(target, value); }
+                catch { field.SetValue(target, ConvertTo(field.FieldType, value)); }
+            }
         }
 
         internal static object ConvertTo(System.Type type, object value)

@@ -164,6 +164,15 @@ def test_reported_build_errors_stay_fixed():
     # the scope of 'bool added': CS0136 + bool->Component. Keep them apart.
     assert "var addedComp = go.AddComponent" in read("quest/BuildMode.cs")
     assert "var added = go.AddComponent" not in read("quest/BuildMode.cs")
+    # 0.4.8: the Quest grab fixup died in ConvertTo ('Object must implement
+    # IConvertible') because IL2CPP grabPoints is Il2CppReferenceArray, not
+    # GrabPoint[]. SetMember tries a direct set first; Quest builds the
+    # native array type; every fixup step logs its own failure.
+    assert "Il2CppReferenceArray<GrabPoint>" in read("quest/BuildMode.cs")
+    assert "TrySet(pickup, \"grabPoints\"" in read("pchost/BuildMode.cs")
+    for proj in ("pchost", "quest"):
+        hook = read(f"{proj}/ConsoleHook.cs")
+        assert "try { prop.SetValue(target, value, null); }" in hook and "try { field.SetValue(target, value); }" in hook
     # Console flight fix: it must be a locked panel, not a loose
     # zero-gravity physics body. It only unlocks while a local hand is
     # actually interacting with its Pickup, then freezes on release.

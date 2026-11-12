@@ -216,7 +216,6 @@ namespace ATTBuilding
                     var pk = entity.gameObject.GetComponentInChildren<Pickup>();
                     if (pk != null) _remoteIdByInstance[pk.gameObject.GetInstanceID()] = id;
                     Diag.Log("track: adopted remote spawn '" + entity.gameObject.name + "' entity=" + id + " (tracked total " + TrackedRegistry.Count + ").");
-                    if (BuildState.BuildMode) BuildMode.EnsureGrabbable(entity.gameObject);
                 }
             }
             catch (Exception ex) { Diag.FileOnly("track scan: " + ex.Message); }

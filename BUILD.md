@@ -328,3 +328,16 @@ when remote spawns are adopted and on 'build mode on'.
 (3) The console gets an orange grab ball beside the panel: a child
 sphere collider on the console's own Pickup, so grabbing it moves the
 console through the existing lock/unlock path.
+
+## 0.4.8 IL2CPP grab-array fix
+
+0.4.7 field results: remote tracking, server despawn ('Removed N of your
+spawned object(s)') and the console grab ball all work. Grabbing still
+failed with 'grabbable fixup FAILED: Object must implement
+IConvertible': on IL2CPP, Pickup.grabPoints is an
+Il2CppReferenceArray<GrabPoint>, so the managed GrabPoint[] built for
+Mono fell into Convert.ChangeType and threw. SetMember now tries a
+direct reflection set before converting; Quest constructs the native
+array type; every fixup step (rigidbody / childrenColliders /
+grabPoints / ...) logs its own failure so the next log names the exact
+step if one still refuses.
