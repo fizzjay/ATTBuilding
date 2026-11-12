@@ -399,3 +399,20 @@ Pickup's Entity member, force `enabled = true`, then call
 `Initialize()`, then re-enable if Initialize disabled it again. The
 grabbable dump line also reports `hasNetEntity=`. Still open whether
 the missing NetworkRigidbody matters for carrying the object.
+
+## 0.4.12 entity-link by hierarchy walk + read-back
+
+0.4.11's entity link reported `attempted=True, entityLinked=False`:
+`ConsoleHook.SetMember` silently no-ops when a member is missing and
+does not walk base types for non-public members, so the name guesses
+never touched the real storage (`Entity` lives on the network
+behaviour base class). 0.4.12 walks Pickup's whole type hierarchy,
+tries every field/property whose type is `NetworkEntity`, and verifies
+each attempt by reading `pickup.Entity` back. If none sticks, it dumps
+every candidate member name (`member?`/`entity member?` log lines)
+once per session so the registration path can be read from the log.
+Also hardened the grab poller: each property is read through a guard
+(`Safe(...)`), because `get_IsDocked` NREs on a Pickup whose Awake
+never completed and one bad getter was blinding the whole poll.
+`Initialize()` still NREs in `Pickup.Awake` (`add_Undocked`) while the
+entity is unlinked -- expected to clear once the link sticks.

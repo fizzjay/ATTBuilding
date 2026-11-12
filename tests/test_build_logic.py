@@ -294,11 +294,17 @@ def test_grab_pipeline_instrumented():
         assert "entityLinked=" in s, f
         # 0.4.11: runtime Pickups start disabled + entity-unlinked; link the
         # NetworkEntity first, force enabled, then Initialize (in that order)
-        assert 'TrySet(pickup, "Entity", netEntity)' in s, f
+        # 0.4.12: SetMember name-guessing silently no-ops; walk the type
+        # hierarchy, try every NetworkEntity-typed member, verify by read-back
+        assert "LinkEntity(pickup, netEntity)" in s, f
+        assert "field.FieldType != typeof(NetworkEntity)" in s, f
+        assert "DumpEntityMembers(pickup, netEntity)" in s, f
+        # poller reads each property defensively (get_IsDocked NREs pre-Awake)
+        assert 'Safe(() => pickup.IsDocked)' in s, f
         assert "pickup.enabled = true" in s, f
         assert "hasNetEntity=" in s, f
     for f in ("quest/Main.cs", "pchost/Main.cs"):
-        assert 'Version = "0.4.11"' in read(f), f
+        assert 'Version = "0.4.12"' in read(f), f
 
 
 if __name__ == "__main__":

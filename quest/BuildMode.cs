@@ -73,11 +73,9 @@ namespace ATTBuildingQuest
                         var netEntity = go.GetComponentInChildren<NetworkEntity>();
                         if (netEntity != null && pickup.Entity == null)
                         {
-                            bool linked = TrySet(pickup, "Entity", netEntity)
-                                || TrySet(pickup, "<Entity>k__BackingField", netEntity)
-                                || TrySet(pickup, "entity", netEntity)
-                                || TrySet(pickup, "_entity", netEntity);
-                            Diag.Log("buildmode: entity link for '" + go.name + "': attempted=" + linked + ", entityLinked=" + (pickup.Entity != null));
+                            bool linked = LinkEntity(pickup, netEntity);
+                            Diag.Log("buildmode: entity link for '" + go.name + "': linked=" + linked + ", entityLinked=" + (pickup.Entity != null));
+                            if (pickup.Entity == null) DumpEntityMembers(pickup, netEntity);
                         }
                         else if (netEntity == null) Diag.Log("buildmode: '" + go.name + "' has NO NetworkEntity component to link a Pickup to.");
                     }
@@ -233,6 +231,84 @@ namespace ATTBuildingQuest
         private static readonly System.Collections.Generic.Dictionary<int, string> _diagState = new System.Collections.Generic.Dictionary<int, string>();
         private static float _diagNext;
 
+
+        // SetMember silently no-ops when a member is missing and does not
+        // walk base types for non-public members, so name-guessing the
+        // Entity storage failed (0.4.11: 'attempted=True, entityLinked=
+        // False'). Walk the whole hierarchy instead and try EVERY member
+        // whose type is NetworkEntity, verifying by reading Entity back.
+        private static bool LinkEntity(Pickup pickup, NetworkEntity netEntity)
+        {
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly;
+            for (var type = pickup.GetType(); type != null; type = type.BaseType)
+            {
+                foreach (var field in type.GetFields(flags))
+                {
+                    if (field.FieldType != typeof(NetworkEntity) && !field.FieldType.IsAssignableFrom(typeof(NetworkEntity))) continue;
+                    try
+                    {
+                        field.SetValue(pickup, netEntity);
+                        if (pickup.Entity != null) { Diag.Log("buildmode: entity linked via field '" + field.Name + "' (" + type.Name + ")"); return true; }
+                    }
+                    catch (Exception ex) { Diag.FileOnly("buildmode: link field '" + field.Name + "': " + ex.Message); }
+                }
+                foreach (var prop in type.GetProperties(flags))
+                {
+                    if (!prop.CanWrite || prop.GetIndexParameters().Length > 0) continue;
+                    if (prop.PropertyType != typeof(NetworkEntity) && !prop.PropertyType.IsAssignableFrom(typeof(NetworkEntity))) continue;
+                    try
+                    {
+                        prop.SetValue(pickup, netEntity, null);
+                        if (pickup.Entity != null) { Diag.Log("buildmode: entity linked via property '" + prop.Name + "' (" + type.Name + ")"); return true; }
+                    }
+                    catch (Exception ex) { Diag.FileOnly("buildmode: link property '" + prop.Name + "': " + ex.Message); }
+                }
+            }
+            return false;
+        }
+
+        private static bool _membersDumped;
+
+        // One-shot: if linking failed, list every member that could be the
+        // real registration path (on Pickup's hierarchy and on the entity),
+        // so the next step is reading a name from the log, not guessing.
+        private static void DumpEntityMembers(Pickup pickup, NetworkEntity netEntity)
+        {
+            if (_membersDumped) return;
+            _membersDumped = true;
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly;
+            try
+            {
+                for (var type = pickup.GetType(); type != null && type != typeof(object); type = type.BaseType)
+                {
+                    foreach (var m in type.GetMembers(flags))
+                    {
+                        string n = m.Name;
+                        if (n.IndexOf("ntity", StringComparison.OrdinalIgnoreCase) < 0
+                            && n.IndexOf("ehaviour", StringComparison.OrdinalIgnoreCase) < 0
+                            && n.IndexOf("egist", StringComparison.OrdinalIgnoreCase) < 0
+                            && n.IndexOf("nitial", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                        Diag.Log("buildmode: member? " + type.Name + "." + n + " (" + m.MemberType + ")");
+                    }
+                }
+                foreach (var m in netEntity.GetType().GetMembers(flags))
+                {
+                    string n = m.Name;
+                    if (n.IndexOf("ehaviour", StringComparison.OrdinalIgnoreCase) < 0
+                        && n.IndexOf("egist", StringComparison.OrdinalIgnoreCase) < 0
+                        && n.IndexOf("dd", StringComparison.OrdinalIgnoreCase) < 0
+                        && n.IndexOf("nitial", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    Diag.Log("buildmode: entity member? " + m.Name + " (" + m.MemberType + ")");
+                }
+            }
+            catch (Exception ex) { Diag.Log("buildmode: member dump failed: " + ex.Message); }
+        }
+
+        private static string Safe(System.Func<object> read)
+        {
+            try { var v = read(); return v == null ? "null" : v.ToString(); } catch { return "?"; }
+        }
+
         private static void PollGrabDiag()
         {
             try
@@ -258,10 +334,14 @@ namespace ATTBuildingQuest
                         }
                     }
                     var body = pickup.Rigidbody;
-                    string state = "interactors=" + pickup.Interactors.Count
-                        + " docked=" + pickup.IsDocked
-                        + " kinematic=" + (body != null && body.isKinematic)
-                        + " entity=" + (pickup.Entity != null)
+                    // Per-property guards: on a never-Awake'd Pickup some
+                    // getters NRE (0.4.11: get_IsDocked), and one bad getter
+                    // must not blind the whole poll.
+                    string state = "interactors=" + Safe(() => pickup.Interactors.Count)
+                        + " docked=" + Safe(() => pickup.IsDocked)
+                        + " kinematic=" + Safe(() => body != null && body.isKinematic)
+                        + " entity=" + Safe(() => pickup.Entity != null)
+                        + " enabled=" + Safe(() => pickup.enabled)
                         + " handDist=" + (nearest < 0f ? "n/a" : (Mathf.Round(nearest * 4f) / 4f).ToString("0.00"));
                     string prev;
                     if (!_diagState.TryGetValue(id, out prev) || prev != state)
