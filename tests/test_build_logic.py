@@ -87,6 +87,7 @@ def test_ray_only_selects_tracked_spawns():
         # materials, no sharedMaterials swaps (Quest shader compiles were
         # a frame killer); the impact dot is a plain primitive
         assert "SyncOutline" in b and "SetOutlineBox" in b and "BuildLitCache" not in b
+        assert b.count("readonly Color HoverColor") == 1 and b.count("readonly Color SelectedColor") == 1
         assert "sharedMaterials" not in "\n".join(l.split("//")[0] for l in b.splitlines()) and "new Material(src)" not in b
         assert "LineRenderer" in b and "ATTBuildingHitDot" in b
         # trigger is the XR trigger read reflectively (no new assembly
@@ -195,9 +196,9 @@ def test_build_memory_persists_across_sessions():
 
 def test_versions_aligned():
     for f in ("quest/Main.cs", "pchost/Main.cs"):
-        assert 'Version = "0.5.4"' in read(f), f
+        assert 'Version = "0.5.5"' in read(f), f
     for p in ("quest/Properties/AssemblyInfo.cs", "pchost/Properties/AssemblyInfo.cs"):
-        assert '"0.5.4.0"' in read(p), p
+        assert '"0.5.5.0"' in read(p), p
 
 
 def test_reported_build_errors_stay_fixed():

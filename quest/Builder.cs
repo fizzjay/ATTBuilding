@@ -669,6 +669,8 @@ namespace ATTBuildingQuest
         // killer on big prefabs). Now: ONE reusable LineRenderer tracing
         // the hovered/selected piece's cached bounds. Positions are only
         // rewritten when the target or its box actually changes.
+        private static readonly Color HoverColor = new Color(1f, 0.72f, 0.12f);   // amber: "trigger will select this"
+        private static readonly Color SelectedColor = new Color(0.25f, 1f, 0.45f); // green: "the tablet controls this"
         private static LineRenderer _outline;
         private static GameObject _outlineRoot;
         private static Color _outlineColor;
