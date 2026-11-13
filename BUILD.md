@@ -45,18 +45,21 @@ Each is isolated in one file per platform, deliberately:
 - `Spawner.cs` -- `PrefabManager.AllPrefabs`, `SpawnHelper.Spawn`,
   `NetworkSceneManager.IsServer/IsLocalTest`, `CommandSync.RouteCommand`
   (server fallback). Server twin: `pchost/ServerCommands.cs`.
-- `Builder.cs` + the provided `TabletUILib` (`tabletquest/`, `tabletpc/`) --
-  the Social Tablet pages, the wrist-wheel bubble injection, and (in
-  `Builder.TriggerInput`) the XR trigger, read purely by reflection so no
-  project needs a `UnityEngine.XRModule` reference. The library's standalone
-  `TabletUIMod.cs` entrypoint is **not** compiled into either project --
-  `Main.cs` does the patch/register/tick wiring itself, so nothing is
-  patched twice. PC additionally compiles the library's `ServerMods.cs`,
-  which needs a `TavernLib` reference (already in the PC project's list).
-  If the Quest build reports a missing `Il2CppAlta.*` type used by the
-  library (`SocialTablet`, `QuickAccessMenuBubble`, ...), add that interop
-  assembly from your `refs/quest` folder to `quest/ATTBuilding.csproj` --
-  the tablet code is the only consumer.
+- `Builder.cs` + the prebuilt `TabletUILib` mod DLL -- the Social Tablet
+  pages, the wrist-wheel bubble injection, and (in `Builder.TriggerInput`)
+  the XR trigger, read purely by reflection so no project needs a
+  `UnityEngine.XRModule` reference. Both projects **reference** the DLL
+  (Quest: `$(QuestReferenceDir)\TabletUILib.dll`, i.e. drop it in
+  `refs/quest`; PC: plain `TabletUILib` reference like the others), and
+  the DLL must **also be in the game's `Mods` folder**: its own mod
+  entrypoint does the Harmony patching and per-frame ticking. Our code
+  only uses the DLL's *public* API (`AddBubble`/`AddApp`, `IsShowing`,
+  `Refresh`, `Close`, `Page`, `TabletBubble`) -- `TabletUI.Patch`,
+  `TabletUI.Tick`, `TabletWheel` and `ServerMods.Start/Tick` are internal
+  to the DLL, so calling them from here is a compile error (CS0117 /
+  CS0122) by design. The uploaded sources under `tabletquest/` /
+  `tabletpc/` are kept in the repo for reference only and are not
+  compiled into either project.
 
 ## Build mode (0.5.0): Prefabulizer tablet, no grabbing
 

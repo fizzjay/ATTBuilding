@@ -29,12 +29,13 @@ namespace ATTBuildingQuest
                 Mod.Log.Msg(BuildNet.Install(harmony));
                 try
                 {
-                    TabletUILib.TabletUI.Patch(harmony);
-                    TabletUILib.TabletWheel.Patch(harmony);
+                    // Only public TabletUILib API here: Patch/Tick/TabletWheel are
+                    // internal to the TabletUILib DLL -- its own MelonMod entrypoint
+                    // does that wiring, so the DLL must also sit in the Mods folder.
                     Builder.RegisterTablet();
-                    Mod.Log.Msg("tablet: Prefabulizer ready (wrist wheel -> Prefabulizer summons the build tablet).");
+                    Mod.Log.Msg("tablet: Prefabulizer registered with TabletUILib (wrist wheel -> Prefabulizer summons the build tablet).");
                 }
-                catch (Exception tex) { Diag.Log("tablet: registration FAILED (build tablet unavailable): " + tex); }
+                catch (Exception tex) { Diag.Log("tablet: registration FAILED (is the TabletUILib mod DLL in Mods?): " + tex); }
 
                 _running = true;
                 Mod.Log.Msg("ATTBuilding " + Mod.Version + " started (Quest IL2CPP). Wrist wheel: 'ATT Building Console' bubble for the console, 'Prefabulizer' bubble for the build tablet. No grabbing -- point, trigger, build.");

@@ -95,7 +95,7 @@ def test_ray_only_selects_tracked_spawns():
     assert "only these objects can be selected" in read("shared/TrackedRegistry.cs").lower()
 
 def test_prefabulizer_tablet_integration():
-    for platform, lib in (("quest", "tabletquest"), ("pchost", "tabletpc")):
+    for platform in ("quest", "pchost"):
         builder = read(f"{platform}/Builder.cs")
         main = read(f"{platform}/Main.cs")
         proj = read(f"{platform}/ATTBuilding.csproj")
@@ -104,18 +104,25 @@ def test_prefabulizer_tablet_integration():
             assert page in builder, (platform, page)
         # opening the tablet IS entering build mode (rising edge on IsShowing)
         assert "IsShowing(HomeFunc)" in builder and "SetBuildMode(true)" in builder
-        assert "TabletUI.Patch" in main and "TabletWheel.Patch" in main and "Builder.RegisterTablet()" in main
-        assert "Builder.Tick()" in main and "TabletUI.Tick()" in builder
-        # provided library is compiled in, but its standalone mod entrypoint
-        # is NOT (that would double-patch every wheel/tablet hook)
-        assert "TabletUILib\\TabletUIMod.cs" not in proj, platform
+        assert "Builder.RegisterTablet()" in main and "Builder.Tick()" in main
+        # The TabletUILib MOD dll is referenced, never source-compiled, and we
+        # only touch its PUBLIC api: Patch/Tick/TabletWheel/ServerMods.Start
+        # are internal to the DLL (its own mod entrypoint runs them), so
+        # calling them is CS0117/CS0122 against the real DLL.
+        assert '<Reference Include="TabletUILib"' in proj, platform
+        assert "TabletUILib\\TabletUI.cs" not in proj and "TabletUILib\\TabletUIMod.cs" not in proj, platform
         assert "Builder.cs" in proj and "BuildMode.cs" not in proj, platform
-        for f in ("TabletUI.cs", "TabletView.cs", "TabletWheel.cs", "Page.cs", "Row.cs",
-                  "TabletBubble.cs", "BubbleAction.cs", "BubbleEntry.cs", "Icons.cs"):
-            assert f"{lib}\\TabletUILib\\{f}" in proj, (platform, f)
-    # PC library's server-mod bridge rides along and is driven from Main.
-    assert "tabletpc\\TabletUILib\\ServerMods.cs" in read("pchost/ATTBuilding.csproj")
-    assert "ServerMods.Start()" in read("pchost/Main.cs") and "ServerMods.Tick()" in read("pchost/Main.cs")
+        code = "\n".join(l.split("//")[0] for l in (main + builder).splitlines())
+        for internal_api in ("TabletUI.Patch", "TabletUI.Tick", "TabletWheel", "ServerMods.Start", "ServerMods.Tick"):
+            assert internal_api not in code, (platform, internal_api)
+        for public_api in ("TabletUI.AddBubble", "TabletUI.IsShowing", "TabletUI.Refresh"):
+            assert public_api in builder or public_api in main, (platform, public_api)
+    # the deleted field stays deleted (a stale BuildMode.cs on disk is the
+    # only thing that ever referenced it -- see test_no_grabbing_anywhere)
+    all_src = ""
+    for f in list((ROOT / "pchost").glob("*.cs")) + list((ROOT / "quest").glob("*.cs")) + list((ROOT / "shared").glob("*.cs")):
+        all_src += f.read_text(encoding="utf-8")
+    assert "HeldInstanceId" not in all_src
 
 def test_tablet_drives_the_selected_piece():
     for platform in ("pchost", "quest"):

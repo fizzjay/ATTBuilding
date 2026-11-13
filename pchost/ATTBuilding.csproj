@@ -45,8 +45,10 @@
     <Reference Include="Alta.Singletons" />
     <Reference Include="Alta.Values" />
     <Reference Include="MelonLoader" />
-    <!-- Needed only by the provided TabletUILib ServerMods.cs (server-mod bridge). -->
-    <Reference Include="TavernLib" />
+    <!-- The TabletUILib MOD dll: resolves like the other references (game folder /
+         refs\pc search path) and must ALSO be in the game's Mods folder --
+         it patches/ticks itself via its own mod entrypoint. -->
+    <Reference Include="TabletUILib" />
     <Reference Include="Root.Township" />
     <Reference Include="System" />
     <Reference Include="System.Core" />
@@ -63,19 +65,8 @@
     <Compile Include="Bubble.cs" />
     <Compile Include="BuildNet.cs" />
     <Compile Include="Builder.cs" />
-    <!-- Provided TabletUILib (PC copy). TabletUIMod.cs (standalone TavernLib mod),
-         Properties\AssemblyInfo.cs and the Microsoft/System compiler shims are
-         excluded: Main does the wiring. -->
-    <Compile Include="..\tabletpc\TabletUILib\BubbleAction.cs"><Link>TabletUILib\BubbleAction.cs</Link></Compile>
-    <Compile Include="..\tabletpc\TabletUILib\BubbleEntry.cs"><Link>TabletUILib\BubbleEntry.cs</Link></Compile>
-    <Compile Include="..\tabletpc\TabletUILib\Icons.cs"><Link>TabletUILib\Icons.cs</Link></Compile>
-    <Compile Include="..\tabletpc\TabletUILib\Page.cs"><Link>TabletUILib\Page.cs</Link></Compile>
-    <Compile Include="..\tabletpc\TabletUILib\Row.cs"><Link>TabletUILib\Row.cs</Link></Compile>
-    <Compile Include="..\tabletpc\TabletUILib\ServerMods.cs"><Link>TabletUILib\ServerMods.cs</Link></Compile>
-    <Compile Include="..\tabletpc\TabletUILib\TabletBubble.cs"><Link>TabletUILib\TabletBubble.cs</Link></Compile>
-    <Compile Include="..\tabletpc\TabletUILib\TabletUI.cs"><Link>TabletUILib\TabletUI.cs</Link></Compile>
-    <Compile Include="..\tabletpc\TabletUILib\TabletView.cs"><Link>TabletUILib\TabletView.cs</Link></Compile>
-    <Compile Include="..\tabletpc\TabletUILib\TabletWheel.cs"><Link>TabletUILib\TabletWheel.cs</Link></Compile>
+    <!-- TabletUILib is referenced as the prebuilt mod DLL (see below); the
+         uploaded sources under ..\tabletpc stay as reference only. -->
     <Compile Include="ConsoleHook.cs" />
     <Compile Include="Diag.cs" />
     <Compile Include="Main.cs" />

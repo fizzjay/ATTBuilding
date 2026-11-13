@@ -206,7 +206,9 @@ namespace ATTBuildingQuest
         // ---- frame tick ------------------------------------------------------
         internal static void Tick()
         {
-            try { TabletUI.Tick(); } catch (Exception ex) { Mod.LogOnce("tablet tick: " + ex.Message); }
+            // No TabletUI.Tick() here: it is internal to the TabletUILib DLL,
+            // whose own mod entrypoint ticks it. We only run the ray + watch
+            // for the tablet opening (rising edge -> build mode on).
             if (!_registered) return;
 
             bool showing = false;

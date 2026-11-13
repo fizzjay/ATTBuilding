@@ -27,13 +27,14 @@ namespace ATTBuilding
 
 try
                 {
-                    TabletUILib.TabletUI.Patch(harmony);
-                    TabletUILib.TabletWheel.Patch(harmony);
-                    TabletUILib.ServerMods.Start();
+                    // Only public TabletUILib API here: Patch/Tick/TabletWheel/
+                    // ServerMods.Start are internal to the TabletUILib DLL -- its
+                    // own mod entrypoint does that wiring, so the DLL must also
+                    // sit in the Mods folder.
                     Builder.RegisterTablet();
-                    Mod.Log.Msg("tablet: Prefabulizer ready (wrist wheel -> Prefabulizer summons the build tablet).");
+                    Mod.Log.Msg("tablet: Prefabulizer registered with TabletUILib (wrist wheel -> Prefabulizer summons the build tablet).");
                 }
-                catch (Exception tex) { Diag.Log("tablet: registration FAILED (build tablet unavailable): " + tex); }
+                catch (Exception tex) { Diag.Log("tablet: registration FAILED (is the TabletUILib mod DLL in Mods?): " + tex); }
                 Diag.FileOnly("server: 'build' module registers when this process becomes a server (ServerSeam FirstInitialize, else the server-state poll).");                _running = true;
                 Mod.Log.Msg("ATTBuilding " + Mod.Version + " started (PC Mono). Wrist wheel: 'ATT Building Console' bubble for the console, 'Prefabulizer' bubble for the build tablet. No grabbing -- point, trigger, build.");
             }
@@ -52,7 +53,6 @@ try
             try { Bubble.Tick(); } catch (Exception e) { Mod.LogOnce("bubble: " + e.Message); }
             try { Builder.Tick(); } catch (Exception e) { Mod.LogOnce("builder: " + e.Message); }
             try { Spawner.TickRemoteTracking(); } catch { }
-            try { TabletUILib.ServerMods.Tick(); } catch { }
             try { ConsoleHook.TickTimeout(); } catch { }
         }
     }
