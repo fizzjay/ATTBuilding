@@ -63,6 +63,7 @@
     <Compile Include="..\shared\SnapMath.cs"><Link>SnapMath.cs</Link></Compile>
     <Compile Include="..\shared\TrackedRegistry.cs"><Link>TrackedRegistry.cs</Link></Compile>
     <Compile Include="..\shared\PrefabNicks.cs"><Link>PrefabNicks.cs</Link></Compile>
+    <Compile Include="..\shared\SpawnLedger.cs"><Link>SpawnLedger.cs</Link></Compile>
     <Compile Include="..\shared\VectorSnap.cs"><Link>VectorSnap.cs</Link></Compile>
     <Compile Include="Bubble.cs" />
     <Compile Include="BuildNet.cs" />

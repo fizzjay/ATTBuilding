@@ -88,6 +88,26 @@ The 0.1-0.4 hand-grab pipeline is deleted. Build mode now works like this:
   tablet moves land on the position grid and rotations quantise to the
   snap angle, so pieces stay straight.
 
+## 0.5.1 notes
+
+- Ray cost: the raycast + trigger poll run at 20 Hz from the chosen hand
+  (right by default; Settings tablet can flip it, resize the ray, and set
+  move/rotate/scale amounts). The line + impact dot still update every
+  frame from the cached hit, so aiming feels instant. The 0.5.0 lag when
+  pointing at a prefab was the hover-only per-frame work (reflective
+  trigger polls + material pulsing at full frame rate) -- both are gone
+  from the frame loop.
+- Two tablets: **Prefabulizer** (control) and **Prefab Settings** (wheel
+  APPS bubble). ATT has one physical Social Tablet, so they share its
+  screen as separate home stacks -- cross-linked, shared state, nothing
+  resets when switching.
+- Build memory: spawns are recorded in `spawned-ledger.txt` (network
+  entity id + prefab hash + transform). `Spawner.TickLedger` re-adopts
+  remembered pieces as they stream in after a rejoin (hash-checked, so a
+  different server reusing an entity id can't hand you someone else's
+  piece), restoring the recorded placement if it drifted. Despawns and
+  `build clear` forget their records; the ledger caps at 400 pieces.
+
 ## Known best-effort behaviour
 
 - The finger ray uses the local hands' `Interactor` transforms; direction

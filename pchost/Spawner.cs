@@ -184,6 +184,8 @@ namespace ATTBuilding
         private static readonly System.Collections.Generic.Dictionary<uint, float> _pendingRemote = new System.Collections.Generic.Dictionary<uint, float>();
         private static readonly System.Collections.Generic.Dictionary<int, uint> _remoteIdByInstance = new System.Collections.Generic.Dictionary<int, uint>();
         private static float _nextTrackScan;
+        private static readonly System.Collections.Generic.HashSet<uint> _ledgerAdopted = new System.Collections.Generic.HashSet<uint>();
+        private static float _nextLedgerScan;
 
         internal static int PendingRemoteCount { get { return _pendingRemote.Count; } }
 
@@ -238,11 +240,99 @@ namespace ATTBuilding
             TrackedRegistry.Add(entity.gameObject.GetInstanceID());
             var pickup = entity.gameObject.GetComponentInChildren<Pickup>();
             if (pickup != null) TrackedRegistry.Add(pickup.gameObject.GetInstanceID());
+            try { LedgerAdopt(entity); } catch { }
         }
 
         // Remove ONE tracked piece (the Prefabulizer's DELETE button).
         // Mirrors ClearSpawned: server-side entities go through BuildNet,
         // local ones are destroyed authoritatively.
+        // ---- Build memory (SpawnLedger): pieces stay editable across sessions ----
+        private static void LedgerAdopt(NetworkEntity entity)
+        {
+            if (entity == null) return;
+            uint id = (uint)entity.Identifier;
+            if (id == 0) return;
+            _ledgerAdopted.Add(id);
+            var go = entity.gameObject;
+            var np = go.GetComponent<NetworkPrefab>();
+            var tr = go.transform;
+            var pos = tr.position; var rot = tr.rotation; var scl = tr.localScale;
+            SpawnLedger.Upsert(new SpawnRecord
+            {
+                EntityId = id,
+                Hash = np == null ? "" : np.Hash.ToString(),
+                Name = Clean(go.name),
+                Px = pos.x, Py = pos.y, Pz = pos.z,
+                Rx = rot.x, Ry = rot.y, Rz = rot.z, Rw = rot.w,
+                Sx = scl.x, Sy = scl.y, Sz = scl.z,
+            });
+        }
+
+        // Called by the Builder after every tablet edit (and on selection),
+        // so the remembered placement always matches what you see.
+        internal static void LedgerUpdate(UnityEngine.GameObject root)
+        {
+            if (root == null) return;
+            var np = root.GetComponent<NetworkPrefab>();
+            var entity = np == null ? root.GetComponentInChildren<NetworkEntity>() : np.Entity;
+            if (entity == null) return;
+            uint id = (uint)entity.Identifier;
+            if (id == 0) return;
+            var tr = root.transform;
+            var pos = tr.position; var rot = tr.rotation; var scl = tr.localScale;
+            SpawnLedger.Upsert(new SpawnRecord
+            {
+                EntityId = id,
+                Hash = np == null ? "" : np.Hash.ToString(),
+                Name = Clean(root.name),
+                Px = pos.x, Py = pos.y, Pz = pos.z,
+                Rx = rot.x, Ry = rot.y, Rz = rot.z, Rw = rot.w,
+                Sx = scl.x, Sy = scl.y, Sz = scl.z,
+            });
+        }
+
+        // Re-adopt pieces from previous sessions as they stream in. Runs at
+        // most every 2.5 s and only while un-adopted records remain.
+        internal static void TickLedger()
+        {
+            try { SpawnLedger.Flush(); } catch { }
+            if (SpawnLedger.Count == 0) return;
+            if (UnityEngine.Time.time < _nextLedgerScan) return;
+            _nextLedgerScan = UnityEngine.Time.time + 2.5f;
+            if (PlayerController.Current == null) return;
+            bool pending = false;
+            foreach (var rec in SpawnLedger.Snapshot()) { if (!_ledgerAdopted.Contains(rec.EntityId)) { pending = true; break; } }
+            if (!pending) return;
+            try
+            {
+                foreach (var entity in UnityEngine.Object.FindObjectsOfType<NetworkEntity>())
+                {
+                    if (entity == null) continue;
+                    uint id = (uint)entity.Identifier;
+                    if (id == 0 || _ledgerAdopted.Contains(id)) continue;
+                    var rec = SpawnLedger.Find(id);
+                    if (rec == null) continue;
+                    var go = entity.gameObject;
+                    var np = go.GetComponent<NetworkPrefab>();
+                    if (!string.IsNullOrEmpty(rec.Hash) && np != null && np.Hash.ToString() != rec.Hash) continue; // same id, different piece (other server): not ours
+                    var tr = go.transform;
+                    var rp = new UnityEngine.Vector3(rec.Px, rec.Py, rec.Pz);
+                    bool drifted = (tr.position - rp).sqrMagnitude > 0.0004f;
+                    Track(entity); // registers + refreshes the ledger record
+                    if (drifted)
+                    {
+                        tr.position = rp;
+                        tr.rotation = new UnityEngine.Quaternion(rec.Rx, rec.Ry, rec.Rz, rec.Rw);
+                        tr.localScale = new UnityEngine.Vector3(rec.Sx, rec.Sy, rec.Sz);
+                        var body = go.GetComponent<UnityEngine.Rigidbody>();
+                        if (body != null) { body.velocity = UnityEngine.Vector3.zero; body.angularVelocity = UnityEngine.Vector3.zero; }
+                    }
+                    Diag.Log("ledger: re-adopted '" + rec.Name + "' (entity " + id + ") from a previous session -- the Prefabulizer can edit it again.");
+                }
+            }
+            catch (Exception ex) { Mod.LogOnce("ledger scan: " + ex.Message); }
+        }
+
         internal static bool DespawnOne(int instanceId, Action<string> print)
         {
             uint remoteId;
@@ -253,6 +343,7 @@ namespace ATTBuilding
                 foreach (int key in keys) { _remoteIdByInstance.Remove(key); TrackedRegistry.Remove(key); }
                 _remoteIds.Remove(remoteId);
                 _pendingRemote.Remove(remoteId);
+                try { SpawnLedger.Remove(remoteId); } catch { }
                 TrackedRegistry.Remove(instanceId);
                 if (BuildNet.SendDespawn(new[] { remoteId })) print("Asked the server to remove that piece...");
                 else print("Could not reach the server to remove that piece (it may still be in the world).");
@@ -268,6 +359,7 @@ namespace ATTBuilding
                 TrackedRegistry.Remove(go.GetInstanceID());
                 var prefab = go.GetComponent<NetworkPrefab>();
                 var entity = prefab == null ? null : prefab.Entity;
+                if (entity != null) { try { SpawnLedger.Remove((uint)entity.Identifier); } catch { } }
                 if (HasAuthority() && entity != null && entity.Spawner != null) entity.Spawner.Destroy(entity, false);
                 else UnityEngine.Object.Destroy(go);
             }
@@ -288,6 +380,7 @@ namespace ATTBuilding
                 {
                     var prefab = go.GetComponent<NetworkPrefab>();
                     var entity = prefab == null ? null : prefab.Entity;
+                    if (entity != null) { try { SpawnLedger.Remove((uint)entity.Identifier); } catch { } }
                     if (HasAuthority() && entity != null && entity.Spawner != null) entity.Spawner.Destroy(entity, false);
                     else UnityEngine.Object.Destroy(go);
                     local++;
@@ -298,6 +391,7 @@ namespace ATTBuilding
             if (_remoteIds.Count > 0)
             {
                 var ids = new uint[_remoteIds.Count]; _remoteIds.CopyTo(ids);
+                try { foreach (uint rid in ids) SpawnLedger.Remove(rid); } catch { }
                 int asking = ids.Length;
                 _remoteIds.Clear(); _pendingRemote.Clear(); _remoteIdByInstance.Clear();
                 foreach (int id in TrackedRegistry.Snapshot()) TrackedRegistry.Remove(id);

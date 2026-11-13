@@ -36,7 +36,7 @@ def test_parser_commands_exist_in_both_platforms():
 
 def test_both_projects_link_identical_shared_files():
     shared = {p.name for p in (ROOT / "shared").glob("*.cs")}
-    assert shared == {"BuildState.cs", "CommandParser.cs", "PrefabNicks.cs", "SnapMath.cs", "TrackedRegistry.cs", "VectorSnap.cs"}
+    assert shared == {"BuildState.cs", "CommandParser.cs", "PrefabNicks.cs", "SnapMath.cs", "SpawnLedger.cs", "TrackedRegistry.cs", "VectorSnap.cs"}
     for proj in ("pchost/ATTBuilding.csproj", "quest/ATTBuilding.csproj"):
         text = read(proj)
         for name in shared:
@@ -89,6 +89,12 @@ def test_ray_only_selects_tracked_spawns():
         # trigger is the XR trigger read reflectively (no new assembly
         # references); a dwell-select fallback covers rigs without it
         assert "UnityEngine.XR.InputDevices" in b and "triggerButton" in b and "1.25f" in b
+        # perf contract (0.5.1): ONE raycast call site, right hand by
+        # default, throttled to 20 Hz -- the hover-only per-frame trigger
+        # polls and material pulses were the prefab-pointing lag
+        assert b.count("Physics.Raycast(") == 1 and "UpdateRaycast" in b
+        assert "_nextRayTick" in b and "0.05f" in b and "RayHand" in b and "ClassifyHand" in b
+        assert "ATTBuildingHitDot" in b  # impact dot: ray reads like a real feature
         # selected pieces are frozen (kinematic): a build piece never falls
         # through the world mid-edit (the falling Map Board lesson)
         assert "isKinematic" in b
@@ -100,10 +106,17 @@ def test_prefabulizer_tablet_integration():
         main = read(f"{platform}/Main.cs")
         proj = read(f"{platform}/ATTBuilding.csproj")
         assert '"Prefabulizer"' in builder and "AddBubble" in builder and ".App(" in builder
-        for page in ("HomePage", "MovePage", "RotatePage", "ScalePage", "PiecesPage", "HelpPage"):
+        for page in ("ControlHomePage", "SettingsHomePage", "MovePage", "RotatePage", "ScalePage", "PiecesPage", "HelpPage", "DeleteConfirmPage"):
             assert page in builder, (platform, page)
-        # opening the tablet IS entering build mode (rising edge on IsShowing)
-        assert "IsShowing(HomeFunc)" in builder and "SetBuildMode(true)" in builder
+        # two tablets, one shared state: control bubble + settings app
+        assert "AddApp" in builder and '"Prefab Settings"' in builder
+        # opening either tablet IS entering build mode (rising edge)
+        assert "IsShowing(ControlHomeFunc)" in builder and "IsShowing(SettingsHomeFunc)" in builder and "SetBuildMode(true)" in builder
+        # delete lives on the control home too (with a confirm page), and
+        # the settings tablet owns the amounts
+        assert builder.count("DELETE selected piece") >= 2
+        assert "Move amount (m)" in builder and "Rotate amount (deg)" in builder and "Scale amount (x)" in builder
+        assert "Ray hand" in builder and "RayLengthMetres" in main
         assert "Builder.RegisterTablet()" in main and "Builder.Tick()" in main
         # The TabletUILib MOD dll is referenced, never source-compiled, and we
         # only touch its PUBLIC api: Patch/Tick/TabletWheel/ServerMods.Start
@@ -146,11 +159,29 @@ def test_bubble_is_a_new_quick_access_action_on_both():
     assert "ConsoleOpener.Toggle" in read("quest/Bubble.cs") + read("pchost/Bubble.cs")
     assert "quickAccessMenus" in read("quest/Bubble.cs") and "quickAccessMenus" in read("pchost/Bubble.cs")
 
+def test_build_memory_persists_across_sessions():
+    # Pieces spawned in earlier sessions must be editable after rejoining:
+    # spawns are written to a ledger keyed by network entity id, and the
+    # platform Spawner re-adopts matches as they stream in.
+    ledger = read("shared/SpawnLedger.cs")
+    assert "spawned-ledger.txt" in ledger and "EntityId" in ledger and "Upsert" in ledger
+    for platform in ("quest", "pchost"):
+        proj = read(f"{platform}/ATTBuilding.csproj")
+        assert "shared\\SpawnLedger.cs" in proj, platform
+        spawner = read(f"{platform}/Spawner.cs")
+        assert "TickLedger" in spawner and "LedgerAdopt" in spawner and "LedgerUpdate" in spawner
+        assert "SpawnLedger.Remove" in spawner  # despawn/clear forget the piece
+        assert "re-adopted" in spawner
+        assert "SpawnLedger.Init" in read(f"{platform}/Main.cs"), platform
+        builder = read(f"{platform}/Builder.cs")
+        assert "Spawner.LedgerUpdate" in builder  # tablet edits refresh the record
+
+
 def test_versions_aligned():
     for f in ("quest/Main.cs", "pchost/Main.cs"):
-        assert 'Version = "0.5.0"' in read(f), f
+        assert 'Version = "0.5.1"' in read(f), f
     for p in ("quest/Properties/AssemblyInfo.cs", "pchost/Properties/AssemblyInfo.cs"):
-        assert '"0.5.0.0"' in read(p), p
+        assert '"0.5.1.0"' in read(p), p
 
 
 def test_reported_build_errors_stay_fixed():

@@ -20,6 +20,7 @@ namespace ATTBuilding
                 Settings.Load();
                 Diag.Init(Mod.DataDir, "PC Mono");
                 PrefabNicks.Init(Mod.DataDir); PrefabNicks.Log = Diag.Log;
+                SpawnLedger.Log = Diag.Log; SpawnLedger.Init(Mod.DataDir);
                 Diag.Log("init: bubble " + (Mod.BubbleEnabled ? "on" : "OFF (pref)") + ", console " + (Mod.ConsoleEnabled ? "on" : "OFF (pref)"));
                 var harmony = new HarmonyLib.Harmony("attbuilding");
                 if (Mod.ConsoleEnabled) Mod.Log.Msg(ConsoleHook.Apply(harmony)); else Mod.Log.Msg("console: OFF (pref) -- hooks skipped.");
@@ -53,13 +54,14 @@ try
             try { Bubble.Tick(); } catch (Exception e) { Mod.LogOnce("bubble: " + e.Message); }
             try { Builder.Tick(); } catch (Exception e) { Mod.LogOnce("builder: " + e.Message); }
             try { Spawner.TickRemoteTracking(); } catch { }
+            try { Spawner.TickLedger(); } catch { }
             try { ConsoleHook.TickTimeout(); } catch { }
         }
     }
 
     internal static class Mod
     {
-        internal const string Version = "0.5.0";
+        internal const string Version = "0.5.1";
         internal static bool BubbleEnabled = true;
         internal static bool ConsoleEnabled = true;
         internal static bool SuppressDummy = true;
@@ -84,6 +86,10 @@ try
             Mod.BubbleEnabled = cat.CreateEntry("BubbleEnabled", true).Value;
             Mod.ConsoleEnabled = cat.CreateEntry("ConsoleEnabled", true).Value;
             Mod.SuppressDummy = cat.CreateEntry("SuppressDummy", true).Value;
+            Builder.MoveStep = cat.CreateEntry("MoveStepMetres", 0.1f).Value;
+            Builder.ScaleStep = cat.CreateEntry("ScaleStep", 1.25f).Value;
+            Builder.RayHand = cat.CreateEntry("RayHand", 0).Value;
+            Builder.RayLength = cat.CreateEntry("RayLengthMetres", 20f).Value;
         }
         internal static void Save()
         {
@@ -94,6 +100,10 @@ try
                 if (e.Identifier == "SnapAngleDegrees") e.BoxedValue = BuildState.AngleStepDegrees;
                 if (e.Identifier == "GridMetres") e.BoxedValue = BuildState.GridMetres;
                 if (e.Identifier == "SnappingDefault") e.BoxedValue = BuildState.Snapping;
+                if (e.Identifier == "MoveStepMetres") e.BoxedValue = Builder.MoveStep;
+                if (e.Identifier == "ScaleStep") e.BoxedValue = Builder.ScaleStep;
+                if (e.Identifier == "RayHand") e.BoxedValue = Builder.RayHand;
+                if (e.Identifier == "RayLengthMetres") e.BoxedValue = Builder.RayLength;
             }
             MelonPreferences.Save();
         }

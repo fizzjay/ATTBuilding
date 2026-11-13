@@ -29,23 +29,31 @@ namespace ATTBuilding
     {
         // ---- tablet wiring ------------------------------------------------
         private static bool _registered;
-        private static readonly Func<Page> HomeFunc = new Func<Page>(HomePage);
+        private static readonly Func<Page> ControlHomeFunc = new Func<Page>(ControlHomePage);
+        private static readonly Func<Page> SettingsHomeFunc = new Func<Page>(SettingsHomePage);
         private static bool _wasShowing;
 
         internal static void RegisterTablet()
         {
             if (_registered) return;
             _registered = true;
+            // Two tablets, one state: CONTROL (top-level wheel bubble) drives
+            // the selected piece; SETTINGS (under the wheel's APPS bubble)
+            // holds the amounts/behaviour. ATT has exactly one physical
+            // Social Tablet, so they share its screen -- but they are
+            // separate home stacks, cross-linked, and neither resets the
+            // other: switching is one tap and selection/settings persist.
             TabletBubble bubble = TabletUI.AddBubble("Prefabulizer", "PFB");
-            bubble.App("Prefabulizer", "PFB", HomeFunc);
-            Diag.Log("builder: Prefabulizer bubble registered (wrist wheel -> Prefabulizer -> tablet).");
+            bubble.App("Prefabulizer", "PFB", ControlHomeFunc);
+            TabletUI.AddApp("Prefab Settings", "SET", SettingsHomeFunc);
+            Diag.Log("builder: Prefabulizer (control) + Prefab Settings tablets registered on the wrist wheel.");
         }
 
         internal static void SetBuildMode(bool on)
         {
             BuildState.BuildMode = on;
             RayOn = on; // entering build mode arms the finger ray immediately
-            if (!on) { ClearLit(); HideLine(); _hover = null; }
+            if (!on) { ClearLit(); HideFx(); _hover = null; }
             Diag.Log("builder: build mode " + (on ? "ON (finger ray armed; Prefabulizer tablet controls the selected piece)" : "off") + ".");
         }
 
@@ -63,7 +71,22 @@ namespace ATTBuilding
 
         private static readonly string[] StepLabels = { "0.01 m", "0.05 m", "0.10 m", "0.25 m", "0.50 m", "1.00 m" };
         private static readonly float[] StepValues = { 0.01f, 0.05f, 0.10f, 0.25f, 0.50f, 1.00f };
-        private static int _stepIdx = 2;
+
+        // Driven from the Settings tablet; persisted via MelonPreferences
+        // (Main.Settings). Rotate amount reuses BuildState.AngleStepDegrees.
+        internal static int RayHand;            // 0 = right (default), 1 = left
+        internal static float RayLength = 20f;  // metres
+        private static float _moveStep = 0.1f;
+        private static float _scaleStep = 1.25f;
+        internal static float MoveStep { get { return _moveStep; } set { _moveStep = Mathf.Clamp(value, 0.005f, 2f); } }
+        internal static float ScaleStep { get { return _scaleStep; } set { _scaleStep = Mathf.Clamp(value, 1.02f, 2f); } }
+
+        private static int NearestStepIdx()
+        {
+            int best = 0; float bd = float.MaxValue;
+            for (int i = 0; i < StepValues.Length; i++) { float d = Mathf.Abs(StepValues[i] - _moveStep); if (d < bd) { bd = d; best = i; } }
+            return best;
+        }
 
         private static void Note(string msg)
         {
@@ -90,20 +113,50 @@ namespace ATTBuilding
         }
 
         // ---- pages -----------------------------------------------------------
-        private static Page HomePage()
+        private static Page ControlHomePage()
         {
             var p = new Page("PREFABULIZER", StatusText());
             p.Toggle("Build mode", () => BuildState.BuildMode, v => SetBuildMode(v));
-            p.Toggle("Finger ray", () => RayOn, v => { RayOn = v; if (!v) { _hover = null; HideLine(); } });
+            p.Toggle("Finger ray", () => RayOn, v => { RayOn = v; if (!v) { _hover = null; HideFx(); } });
             p.Text("Controlling", SelectedLabel());
-            p.Link("Move piece", StepLabels[_stepIdx] + " steps", MovePage);
+            p.Link("Move piece", F(_moveStep) + " m steps", MovePage);
             p.Link("Rotate piece", RotateStep() + " deg steps", RotatePage);
-            p.Link("Scale piece", Percent(_scaleFactor), ScalePage);
+            p.Link("Scale piece", "x" + F(_scaleStep) + " steps", ScalePage);
             p.Link("Pieces", TrackedRegistry.Count + " spawned", PiecesPage);
+            if (_selected != null) p.Link("DELETE selected piece", CleanName(_selected), DeleteConfirmPage);
+            p.Link("Settings tablet", "amounts / snapping / ray", SettingsHomePage);
             p.Link("How to use", "60-second guide", HelpPage);
-            p.Toggle("Snapping (straight + grid)", () => BuildState.Snapping, v => { BuildState.Snapping = v; Settings.Save(); });
             p.Button("Close tablet", delegate { try { TabletUI.Close(); } catch { } });
-            p.Footer = "ATTBuilding " + Mod.Version + " -- no grabbing, just point, trigger, build.";
+            p.Footer = "ATTBuilding " + Mod.Version + " -- point, trigger, build.";
+            return p;
+        }
+
+        // The second tablet: everything about HOW MUCH things move, plus
+        // snapping and ray behaviour. Wheel: APPS -> Prefab Settings (also
+        // linked from Control). Shares all state with the Control tablet.
+        private static Page SettingsHomePage()
+        {
+            var p = new Page("PREFAB SETTINGS", "Amounts and behaviour -- saved automatically.");
+            p.Slider("Move amount (m)", () => _moveStep, v => { MoveStep = v; Settings.Save(); }, 0.01f, 1f, 0.01f);
+            p.Choice("Move amount presets", StepLabels, () => NearestStepIdx(), v => { MoveStep = StepValues[Mathf.Clamp(v, 0, StepValues.Length - 1)]; Settings.Save(); });
+            p.Slider("Rotate amount (deg)", () => BuildState.AngleStepDegrees, v => { BuildState.AngleStepDegrees = Mathf.Clamp(v, 1f, 90f); Settings.Save(); }, 1f, 90f, 1f);
+            p.Slider("Scale amount (x)", () => _scaleStep, v => { ScaleStep = v; Settings.Save(); }, 1.05f, 1.5f, 0.05f);
+            p.Toggle("Snapping (straight + grid)", () => BuildState.Snapping, v => { BuildState.Snapping = v; Settings.Save(); });
+            p.Slider("Snap grid (m)", () => BuildState.GridMetres, v => { BuildState.GridMetres = Mathf.Clamp(v, 0f, 1f); Settings.Save(); }, 0f, 1f, 0.05f);
+            p.Choice("Ray hand", new[] { "Right", "Left" }, () => RayHand, v => { RayHand = Mathf.Clamp(v, 0, 1); Settings.Save(); });
+            p.Slider("Ray length (m)", () => RayLength, v => { RayLength = Mathf.Clamp(v, 5f, 40f); Settings.Save(); }, 5f, 40f, 1f);
+            p.Text("Trigger input", TriggerInput.StatusText());
+            p.Link("Back to control tablet", ControlHomePage);
+            p.Footer = "ATTBuilding " + Mod.Version + " -- settings save automatically.";
+            return p;
+        }
+
+        private static Page DeleteConfirmPage()
+        {
+            var p = new Page("DELETE PIECE?", "This despawns it for everyone on the server.");
+            p.Text("Piece", SelectedLabel());
+            p.Button("YES -- delete it", delegate { DeleteSelected(); try { TabletUI.GoHome(); } catch { } });
+            p.Text("Keep it", "use the back button");
             return p;
         }
 
@@ -112,8 +165,8 @@ namespace ATTBuilding
             var p = new Page("MOVE", StatusText());
             p.Text("Controlling", SelectedLabel());
             if (_selected == null) { p.Text("Nothing selected", "finger-ray a spawned piece + trigger"); return p; }
-            p.Choice("Step size", StepLabels, () => _stepIdx, v => _stepIdx = Mathf.Clamp(v, 0, StepLabels.Length - 1));
-            string d = "+/- " + StepLabels[_stepIdx];
+            p.Text("Step", F(_moveStep) + " m (Settings tablet)");
+            string d = "+/- " + F(_moveStep) + " m";
             p.Button("FORWARD", d, delegate { Nudge(HeadRight(), HeadFwd(), 0f, 1f); });
             p.Button("BACK", d, delegate { Nudge(HeadRight(), HeadFwd(), 0f, -1f); });
             p.Button("LEFT", d, delegate { Nudge(HeadRight(), HeadFwd(), -1f, 0f); });
@@ -150,8 +203,8 @@ namespace ATTBuilding
             p.Text("Controlling", SelectedLabel());
             if (_selected == null) { p.Text("Nothing selected", "finger-ray a spawned piece + trigger"); return p; }
             p.Text("Current scale", Percent(_scaleFactor) + " of spawned size");
-            p.Button("Bigger", "x1.25", delegate { SetScaleFactor(_scaleFactor * 1.25f); });
-            p.Button("Smaller", "x0.8", delegate { SetScaleFactor(_scaleFactor * 0.8f); });
+            p.Button("Bigger", "x" + F(_scaleStep), delegate { SetScaleFactor(_scaleFactor * _scaleStep); });
+            p.Button("Smaller", "/" + F(_scaleStep), delegate { SetScaleFactor(_scaleFactor / _scaleStep); });
             p.Slider("Scale (fine)", () => _scaleFactor, v => SetScaleFactor(v), 0.1f, 5f, 0.05f);
             p.Button("Reset scale", "x1.00", delegate { SetScaleFactor(1f); });
             p.Toggle("Frozen (can't fall)", () => _frozen, v => SetFrozenSelected(v));
@@ -162,6 +215,7 @@ namespace ATTBuilding
         {
             var p = new Page("PIECES", StatusText());
             p.Text("Spawned pieces", TrackedRegistry.Count + " tracked");
+            p.Text("Build memory", SpawnLedger.Count + " remembered (all sessions)");
             p.Text("Controlling", SelectedLabel());
             p.Button("Select next piece", delegate { CycleSelection(1); });
             p.Button("Select previous piece", delegate { CycleSelection(-1); });
@@ -189,7 +243,7 @@ namespace ATTBuilding
         {
             var p = new Page("HOW TO USE", "Prefabulizer in 60 seconds");
             p.Text("1. Spawn pieces", "console bubble, then: build spawn <name>");
-            p.Text("2. Open this tablet", "wrist wheel > Prefabulizer");
+            p.Text("2. Open this tablet", "wrist wheel > Prefabulizer (settings: APPS > Prefab Settings)");
             p.Text("3. Build mode + ray on", "toggles on the home page");
             p.Text("4. Point at a piece", "its whole mesh glows amber");
             p.Text("5. Pull the trigger", "now the tablet controls it (green)");
@@ -197,6 +251,7 @@ namespace ATTBuilding
             p.Text("7. Move / Rotate / Scale", "pages on the home screen");
             p.Text("Staying straight", "snapping on + build snapangle / build grid in the console");
             p.Text("Only your spawns", "world items are never selected");
+            p.Text("Forever yours", "spawned pieces are remembered -- rejoin later and they are editable again");
             p.Footer = "No grabbing anywhere -- nothing to fight the hand physics.";
             return p;
         }
@@ -210,20 +265,31 @@ namespace ATTBuilding
             if (!_registered) return;
 
             bool showing = false;
-            try { showing = TabletUI.IsShowing(HomeFunc); } catch { }
-            if (showing && !_wasShowing) SetBuildMode(true); // opening the tablet IS entering build mode
+            try { showing = TabletUI.IsShowing(ControlHomeFunc) || TabletUI.IsShowing(SettingsHomeFunc); } catch { }
+            if (showing && !_wasShowing) SetBuildMode(true); // opening a tablet IS entering build mode
             _wasShowing = showing;
 
             ValidateSelection();
-            if (!BuildState.BuildMode || !RayOn)
+            if (!BuildState.BuildMode)
             {
-                if (_hover != null) _hover = null;
-                if (!BuildState.BuildMode) ClearLit(); else UpdateSelectedGlow();
-                HideLine();
-                _dwellId = 0;
+                _hover = null; ClearLit(); HideFx(); _dwellId = 0;
                 return;
             }
-            UpdateRay();
+            if (!RayOn)
+            {
+                _hover = null; UpdateSelectedGlow(); HideFx(); _dwellId = 0;
+                return;
+            }
+            // Perf: the expensive part -- ONE raycast from the ray hand plus
+            // the trigger poll -- runs at 20 Hz. The visible line/dot follow
+            // the hand every frame from the cached result, so aiming still
+            // feels instant but the physics cost drops ~10x.
+            if (Time.unscaledTime >= _nextRayTick)
+            {
+                _nextRayTick = Time.unscaledTime + 0.05f;
+                UpdateRaycast();
+            }
+            UpdateRayVisual();
         }
 
         private static void ValidateSelection()
@@ -238,33 +304,74 @@ namespace ATTBuilding
             _selected = null; _selectedId = 0; _scaleFactor = 1f;
         }
 
-        // ---- finger ray --------------------------------------------------------
-        private static Transform[] _hands = new Transform[0];
-        private static Transform[] _tips = new Transform[0];
+        // ---- finger ray (right hand by default; Settings can flip it) --------
+        private static Transform _handR, _handL, _tipR, _tipL;
         private static int _handOwnerId;
+        private static float _nextRayTick;
+        private static Vector3 _hitPoint;
+        private static bool _hasHit;
 
         private static void AcquireHands()
         {
             try
             {
                 var player = PlayerController.Current;
-                if (player == null) { _hands = new Transform[0]; _tips = new Transform[0]; _handOwnerId = 0; return; }
-                if (_handOwnerId == player.GetInstanceID() && _hands.Length > 0 && _hands[0] != null) return;
-                var found = new List<Transform>();
-                var tips = new List<Transform>();
+                if (player == null) { _handR = _handL = _tipR = _tipL = null; _handOwnerId = 0; return; }
+                if (_handOwnerId == player.GetInstanceID() && (_handR != null || _handL != null)) return;
+                _handR = _handL = _tipR = _tipL = null;
+                Transform head = null;
+                try { head = player.Head; } catch { }
+                var unclaimed = new List<Transform>();
                 foreach (var interactor in player.GetComponentsInChildren<Interactor>())
                 {
                     if (interactor == null || !interactor.IsLocal) continue;
-                    found.Add(interactor.transform);
-                    tips.Add(FindTip(interactor.transform));
+                    int side = ClassifyHand(interactor.transform, head); // 0 right, 1 left, -1 unknown
+                    if (side == 0 && _handR == null) { _handR = interactor.transform; _tipR = FindTip(_handR); }
+                    else if (side == 1 && _handL == null) { _handL = interactor.transform; _tipL = FindTip(_handL); }
+                    else unclaimed.Add(interactor.transform);
                 }
-                _hands = found.ToArray(); _tips = tips.ToArray(); _handOwnerId = player.GetInstanceID();
-                if (_hands.Length > 0) Diag.FileOnly("builder: finger ray hands=" + _hands.Length + " (tips found: " + CountNonNull(_tips) + ").");
+                foreach (var u in unclaimed)
+                {
+                    if (_handR == null) { _handR = u; _tipR = FindTip(u); }
+                    else if (_handL == null) { _handL = u; _tipL = FindTip(u); }
+                }
+                _handOwnerId = player.GetInstanceID();
+                Diag.FileOnly("builder: ray hands R='" + (_handR == null ? "-" : _handR.name) + "' L='" + (_handL == null ? "-" : _handL.name) + "' (ray on " + (RayHand == 0 ? "RIGHT" : "LEFT") + ").");
             }
             catch (Exception ex) { Mod.LogOnce("builder hands: " + ex.Message); }
         }
 
-        private static int CountNonNull(Transform[] arr) { int n = 0; foreach (var t in arr) if (t != null) n++; return n; }
+        // Which hand is this? Trust rig names first ("...Right..."), then
+        // which side of the head it was on when first seen.
+        private static int ClassifyHand(Transform hand, Transform head)
+        {
+            for (var t = hand; t != null; t = t.parent)
+            {
+                string n = t.name.ToLowerInvariant();
+                if (n.Contains("right")) return 0;
+                if (n.Contains("left")) return 1;
+            }
+            if (head != null)
+            {
+                try { return head.InverseTransformPoint(hand.position).x >= 0f ? 0 : 1; } catch { }
+            }
+            return -1;
+        }
+
+        private static Transform RayHandTransform(out Transform tip)
+        {
+            Transform t = RayHand == 0 ? _handR : _handL;
+            tip = RayHand == 0 ? _tipR : _tipL;
+            if (t == null) { t = RayHand == 0 ? _handL : _handR; tip = RayHand == 0 ? _tipL : _tipR; }
+            if (t == null)
+            {
+                AcquireHands();
+                t = RayHand == 0 ? _handR : _handL;
+                tip = RayHand == 0 ? _tipR : _tipL;
+                if (t == null) { t = RayHand == 0 ? _handL : _handR; tip = RayHand == 0 ? _tipL : _tipR; }
+            }
+            return t;
+        }
 
         // The ray should leave from the pointer fingertip when the hand rig
         // exposes one ("IndexTip"/"Pointer"...); otherwise the hand origin.
@@ -295,33 +402,32 @@ namespace ATTBuilding
             return null;
         }
 
-        private static void UpdateRay()
+        // Runs at 20 Hz (see Tick): ONE raycast, from the chosen ray hand.
+        private static void UpdateRaycast()
         {
-            if (_hands.Length == 0 || _hands[0] == null) AcquireHands();
-            GameObject best = null; float bestDist = float.MaxValue;
-            Vector3 bestOrigin = Vector3.zero, bestEnd = Vector3.zero; bool anyOrigin = false;
-            for (int i = 0; i < _hands.Length; i++)
+            Transform tip;
+            var hand = RayHandTransform(out tip);
+            if (hand == null) { SetHover(null); _hasHit = false; return; }
+            Vector3 origin = tip != null ? tip.position : hand.position;
+            RaycastHit hit;
+            GameObject root = null;
+            if (Physics.Raycast(origin, hand.forward, out hit, RayLength, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
             {
-                var hand = _hands[i];
-                if (hand == null) { AcquireHands(); break; }
-                Vector3 origin = (i < _tips.Length && _tips[i] != null) ? _tips[i].position : hand.position;
-                Vector3 dir = hand.forward;
-                if (!anyOrigin) { bestOrigin = origin; bestEnd = origin + dir * 30f; anyOrigin = true; }
-                RaycastHit hit;
-                if (!Physics.Raycast(origin, dir, out hit, 40f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore)) continue;
-                var root = TrackedRootOf(hit.collider == null ? null : hit.collider.transform);
-                if (root == null) continue;
-                if (hit.distance < bestDist) { bestDist = hit.distance; best = root; bestOrigin = origin; bestEnd = hit.point; }
+                root = TrackedRootOf(hit.collider == null ? null : hit.collider.transform);
+                if (root != null) { _hitPoint = hit.point; _hasHit = true; }
             }
-            if (best != _hover)
-            {
-                _hover = best;
-                _dwellId = 0;
-                if (best != null) Diag.FileOnly("builder: ray hovering '" + CleanName(best) + "' (trigger selects it).");
-            }
+            if (root == null) _hasHit = false;
+            SetHover(root);
+            if (root != null) PollSelect(root);
+        }
+
+        private static void SetHover(GameObject root)
+        {
+            if (root == _hover) { UpdateGlow(); return; }
+            _hover = root;
+            _dwellId = 0;
+            if (root != null) Diag.FileOnly("builder: ray hovering '" + CleanName(root) + "' (trigger selects it).");
             UpdateGlow();
-            DrawLine(anyOrigin ? bestOrigin : Vector3.zero, bestEnd, anyOrigin, best != null);
-            if (best != null) PollSelect(best);
         }
 
         // ---- selection trigger: XR trigger, dwell fallback ----------------------
@@ -348,6 +454,7 @@ namespace ATTBuilding
             _baseScale = root.transform.localScale;
             _scaleFactor = 1f;
             SetFrozenSelected(true); // a build piece must never drop mid-edit (the falling Map Board lesson)
+            try { Spawner.LedgerUpdate(root); } catch { }
             Note("Controlling '" + CleanName(root) + "' -- MOVE / ROTATE / SCALE pages drive it. Point + trigger another piece to switch.");
             try { TabletUI.Refresh(); } catch { }
         }
@@ -478,48 +585,93 @@ namespace ATTBuilding
             _litRoot = null;
         }
 
-        // ---- ray visual ------------------------------------------------------------
+        // ---- ray visual (line + impact dot; per-frame, from cached results) -----
         private static LineRenderer _line;
-        private static bool _lineReady;
+        private static GameObject _dot;
+        private static bool _fxReady;
 
-        private static void EnsureLine()
+        private static void EnsureFx()
         {
-            if (_lineReady) return;
-            _lineReady = true;
+            if (_fxReady) return;
+            _fxReady = true;
             try
             {
                 var go = new GameObject("ATTBuildingFingerRay");
+                go.layer = 2; // Ignore Raycast: never intersects our own raycast mask
                 UnityEngine.Object.DontDestroyOnLoad(go);
                 _line = go.AddComponent<LineRenderer>();
-                if (_line == null) return;
-                var shader = Shader.Find("Unlit/Color");
-                if (shader == null) shader = Shader.Find("Sprites/Default");
-                if (shader != null) _line.material = new Material(shader);
-                _line.startWidth = 0.004f; _line.endWidth = 0.0015f;
-                _line.positionCount = 2;
-                _line.enabled = false;
+                if (_line != null)
+                {
+                    var shader = Shader.Find("Unlit/Color");
+                    if (shader == null) shader = Shader.Find("Sprites/Default");
+                    if (shader != null) _line.material = new Material(shader);
+                    _line.startWidth = 0.0035f; _line.endWidth = 0.0012f;
+                    _line.positionCount = 2;
+                    _line.enabled = false;
+                }
+                _dot = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                _dot.name = "ATTBuildingHitDot";
+                _dot.layer = 2;
+                UnityEngine.Object.DontDestroyOnLoad(_dot);
+                var col = _dot.GetComponent<Collider>();
+                if (col != null) col.enabled = false; // the dot must never block the ray
+                var rend = _dot.GetComponent<MeshRenderer>();
+                if (rend != null)
+                {
+                    var sh = Shader.Find("Standard");
+                    if (sh == null) sh = Shader.Find("Unlit/Color");
+                    if (sh != null)
+                    {
+                        var m = new Material(sh);
+                        m.color = HoverColor;
+                        if (m.HasProperty("_EmissionColor")) m.SetColor("_EmissionColor", HoverColor);
+                        rend.material = m;
+                    }
+                }
+                _dot.SetActive(false);
             }
-            catch (Exception ex) { Mod.LogOnce("builder ray line: " + ex.Message); }
+            catch (Exception ex) { Mod.LogOnce("builder ray fx: " + ex.Message); }
         }
 
-        private static void DrawLine(Vector3 origin, Vector3 end, bool hasHand, bool onTarget)
+        // Every frame: point the line from the fingertip; the endpoint is
+        // the cached hit point (refreshed at 20 Hz) or full ray length.
+        private static void UpdateRayVisual()
         {
-            EnsureLine();
-            if (_line == null || !hasHand) { HideLine(); return; }
+            EnsureFx();
+            Transform tip;
+            var hand = RayHandTransform(out tip);
+            if (hand == null) { HideFx(); return; }
+            Vector3 origin = tip != null ? tip.position : hand.position;
+            bool onTarget = _hover != null && _hasHit;
+            Vector3 end = onTarget ? _hitPoint : origin + hand.forward * RayLength;
             try
             {
-                _line.enabled = true;
-                var c = onTarget ? SelectedColor : HoverColor;
-                _line.startColor = c; _line.endColor = c;
-                _line.SetPosition(0, origin);
-                _line.SetPosition(1, end);
+                if (_line != null)
+                {
+                    _line.enabled = true;
+                    var c = onTarget ? SelectedColor : HoverColor;
+                    _line.startColor = c; _line.endColor = c;
+                    _line.SetPosition(0, origin);
+                    _line.SetPosition(1, end);
+                }
+                if (_dot != null)
+                {
+                    _dot.SetActive(onTarget);
+                    if (onTarget)
+                    {
+                        _dot.transform.position = _hitPoint;
+                        float s = 0.02f + 0.005f * Mathf.Sin(Time.unscaledTime * 6f);
+                        _dot.transform.localScale = new Vector3(s, s, s);
+                    }
+                }
             }
             catch { }
         }
 
-        private static void HideLine()
+        private static void HideFx()
         {
             try { if (_line != null) _line.enabled = false; } catch { }
+            try { if (_dot != null) _dot.SetActive(false); } catch { }
         }
 
         // ---- tablet operations on the selected piece ------------------------------
@@ -561,13 +713,13 @@ namespace ATTBuilding
                 if (body != null) { body.velocity = Vector3.zero; body.angularVelocity = Vector3.zero; }
             }
             catch { }
+            try { Spawner.LedgerUpdate(_selected); } catch { }
         }
 
         private static void Nudge(Vector3 right, Vector3 fwd, float sx, float sz)
         {
             if (_selected == null) return;
-            float step = StepValues[_stepIdx];
-            _selected.transform.position += (right * sx + fwd * sz) * step;
+            _selected.transform.position += (right * sx + fwd * sz) * _moveStep;
             SnapPositionIfOn();
             AfterEdit();
         }
@@ -575,7 +727,7 @@ namespace ATTBuilding
         private static void NudgeWorld(Vector3 dir)
         {
             if (_selected == null) return;
-            _selected.transform.position += dir * StepValues[_stepIdx];
+            _selected.transform.position += dir * _moveStep;
             SnapPositionIfOn();
             AfterEdit();
         }
@@ -653,7 +805,14 @@ namespace ATTBuilding
             internal static bool Available { get { Ensure(); return _ok; } }
 
             private static bool _ok;
+            private static bool _tried;
             private static float _nextTry = -1f;
+
+            internal static string StatusText()
+            {
+                if (_ok) return "XR trigger -- pull to select";
+                return _tried ? "dwell-select (hold ray on a piece ~1.25 s)" : "checking...";
+            }
             private static MethodInfo _getDevice;
             private static MethodInfo _tryGet;
             private static object _nodeLeft, _nodeRight, _usage;
@@ -663,6 +822,7 @@ namespace ATTBuilding
             {
                 if (_ok || Time.unscaledTime < _nextTry) return;
                 _nextTry = Time.unscaledTime + 3f;
+                _tried = true;
                 try
                 {
                     var tDevices = AccessTools.TypeByName("UnityEngine.XR.InputDevices");
