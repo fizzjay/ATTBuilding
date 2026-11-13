@@ -534,7 +534,7 @@ namespace ATTBuilding
                 if (pr.Root == null) { ProbesDirty = true; continue; }
                 if ((pr.Root.transform.position - pr.Anchor).sqrMagnitude > 0.0001f) RefreshProbe(pr); // moved by someone else
                 bool inside = pr.Box.Contains(origin);
-                float d;
+                float d = 0f;
                 if (!inside && !pr.Box.IntersectRay(ray, out d)) continue;
                 if (inside) d = 0f;
                 if (d > RayLength) continue;

@@ -97,6 +97,7 @@ def test_ray_only_selects_tracked_spawns():
         # material calls; the trigger poll touches the ray hand only.
         code_only = "\n".join(l.split("//")[0] for l in b.splitlines())
         assert "Physics.Raycast(" not in code_only and "IntersectRay" in b and "Raycast(ray, out" in b
+        assert "float d = 0f;" in b and "float d;" not in b  # CS0165: out-var must be pre-initialised
         assert "_probes" in b and "SyncProbes" in b and "ProbesDirty" in b and "ProbesDirty" in read(f"{platform}/Spawner.cs")
         assert "_litCache" in b and "PulseLit" not in b and "PressedEdge(RayHand)" in b
         assert "_nextRayTick" in b and "0.05f" in b and "RayHand" in b and "ClassifyHand" in b
@@ -189,9 +190,9 @@ def test_build_memory_persists_across_sessions():
 
 def test_versions_aligned():
     for f in ("quest/Main.cs", "pchost/Main.cs"):
-        assert 'Version = "0.5.2"' in read(f), f
+        assert 'Version = "0.5.3"' in read(f), f
     for p in ("quest/Properties/AssemblyInfo.cs", "pchost/Properties/AssemblyInfo.cs"):
-        assert '"0.5.2.0"' in read(p), p
+        assert '"0.5.3.0"' in read(p), p
 
 
 def test_reported_build_errors_stay_fixed():
