@@ -1,9 +1,11 @@
 """Static contract tests, ArmorUpdate-style: no game needed.
 
 They pin (a) the snapping maths by re-deriving it from shared/SnapMath.cs
-constants, and (b) the PC/Quest parity contract: both projects link the same
+constants, (b) the PC/Quest parity contract: both projects link the same
 shared files, expose the same commands, and never cross-reference the other
-platform's assemblies.
+platform's assemblies, and (c) the 0.5.0 tablet contract: NO grabbing
+anywhere -- build mode is the Prefabulizer tablet + finger ray + trigger
+select over tracked spawns only, using the provided TabletUILib.
 """
 import math, pathlib, re
 
@@ -52,18 +54,95 @@ def test_no_cross_platform_references():
     assert "CommandSync" in read("quest/Spawner.cs") and "DelegateSupport.ConvertDelegate" in read("quest/Spawner.cs")
     assert "NetworkSceneManager.IsServer" in read("quest/Spawner.cs")
 
-def test_build_mode_only_touches_tracked_spawns():
+def test_no_grabbing_anywhere():
+    # 0.5.0 pivot (user: "no more grabbing... it's too much rn and laggy"):
+    # the entire hand-grab pipeline is deleted, not disabled.
     for platform in ("pchost", "quest"):
-        bm = read(f"{platform}/BuildMode.cs")
-        assert "TrackedRegistry.Contains" in bm
-        assert "VectorSnap.SnapRotation" in bm and "VectorSnap.SnapPosition" in bm
-    assert "only these objects become grabbable" in read("shared/TrackedRegistry.cs").lower()
+        assert not (ROOT / platform / "BuildMode.cs").exists(), platform
+        builder = read(f"{platform}/Builder.cs")
+        code_only = "\n".join(line.split("//")[0] for line in builder.splitlines())
+        assert "Pickup" not in code_only, platform  # never add/fix/touch a Pickup again
+        assert "Bounds" not in code_only, platform  # highlight is the mesh, never a box proxy
+        hook = read(f"{platform}/ConsoleHook.cs")
+        for banned in ("EnsureMovable", "AddGrabHandle", "FixupPickup", "TickConsoleLock", "IsConsoleGrabbed", "ATTBuildingGrabHandle"):
+            assert banned not in hook, (platform, banned)
+        assert "EnsureGrabbable" not in read(f"{platform}/Spawner.cs"), platform
+    all_src = ""
+    for f in list((ROOT / "pchost").glob("*.cs")) + list((ROOT / "quest").glob("*.cs")) + list((ROOT / "shared").glob("*.cs")):
+        all_src += f.read_text(encoding="utf-8")
+    for banned in ("PollBackupGrab", "PollGrabDiag", "MANUAL CARRY", "InstallSurfaceGrabPoints",
+                   "HydratePickupGraph", "CaptureNativeTemplate", "handscan:", "bestgrab ",
+                   "GrabPoint", "backupgrab:"):
+        assert banned not in all_src, banned
+    # help text must never again tell the player to grab something
+    help_section = read("shared/CommandParser.cs").split("HelpLines")[1]
+    assert "grabbed" not in help_section and "grab it" not in help_section and "grab the" not in help_section
+
+def test_ray_only_selects_tracked_spawns():
+    for platform in ("pchost", "quest"):
+        b = read(f"{platform}/Builder.cs")
+        # selection is gated on the tracked registry at every step (ancestor walk)
+        assert "TrackedRegistry.Contains" in b and "TrackedRootOf" in b
+        # the highlight lights the prefab's actual renderers/materials
+        assert "GetComponentsInChildren<Renderer>" in b and "_EmissionColor" in b and "sharedMaterials" in b
+        assert "Physics.Raycast" in b and "LineRenderer" in b
+        # trigger is the XR trigger read reflectively (no new assembly
+        # references); a dwell-select fallback covers rigs without it
+        assert "UnityEngine.XR.InputDevices" in b and "triggerButton" in b and "1.25f" in b
+        # selected pieces are frozen (kinematic): a build piece never falls
+        # through the world mid-edit (the falling Map Board lesson)
+        assert "isKinematic" in b
+    assert "only these objects can be selected" in read("shared/TrackedRegistry.cs").lower()
+
+def test_prefabulizer_tablet_integration():
+    for platform, lib in (("quest", "tabletquest"), ("pchost", "tabletpc")):
+        builder = read(f"{platform}/Builder.cs")
+        main = read(f"{platform}/Main.cs")
+        proj = read(f"{platform}/ATTBuilding.csproj")
+        assert '"Prefabulizer"' in builder and "AddBubble" in builder and ".App(" in builder
+        for page in ("HomePage", "MovePage", "RotatePage", "ScalePage", "PiecesPage", "HelpPage"):
+            assert page in builder, (platform, page)
+        # opening the tablet IS entering build mode (rising edge on IsShowing)
+        assert "IsShowing(HomeFunc)" in builder and "SetBuildMode(true)" in builder
+        assert "TabletUI.Patch" in main and "TabletWheel.Patch" in main and "Builder.RegisterTablet()" in main
+        assert "Builder.Tick()" in main and "TabletUI.Tick()" in builder
+        # provided library is compiled in, but its standalone mod entrypoint
+        # is NOT (that would double-patch every wheel/tablet hook)
+        assert "TabletUILib\\TabletUIMod.cs" not in proj, platform
+        assert "Builder.cs" in proj and "BuildMode.cs" not in proj, platform
+        for f in ("TabletUI.cs", "TabletView.cs", "TabletWheel.cs", "Page.cs", "Row.cs",
+                  "TabletBubble.cs", "BubbleAction.cs", "BubbleEntry.cs", "Icons.cs"):
+            assert f"{lib}\\TabletUILib\\{f}" in proj, (platform, f)
+    # PC library's server-mod bridge rides along and is driven from Main.
+    assert "tabletpc\\TabletUILib\\ServerMods.cs" in read("pchost/ATTBuilding.csproj")
+    assert "ServerMods.Start()" in read("pchost/Main.cs") and "ServerMods.Tick()" in read("pchost/Main.cs")
+
+def test_tablet_drives_the_selected_piece():
+    for platform in ("pchost", "quest"):
+        b = read(f"{platform}/Builder.cs")
+        hook = read(f"{platform}/ConsoleHook.cs")
+        spawner = read(f"{platform}/Spawner.cs")
+        # movement: position nudges keep pieces straight via shared snapping
+        assert "VectorSnap.SnapPosition" in b and "VectorSnap.SnapRotation" in b
+        assert "transform.Rotate" in b and "localScale" in b  # rotate + scale pages
+        assert "FORWARD" in b and "Yaw left" in b and "Bigger" in b  # move/rotate/scale pages exist
+        # console 'build mode on' goes through the same SetBuildMode door
+        assert "Builder.SetBuildMode(cmd.Flag)" in hook
+        # tablet can respawn the last prefab and delete the selected one
+        assert "LastSpawnName" in spawner and "LastSpawnName" in b
+        assert "DespawnOne" in spawner and "DespawnOne" in b
 
 def test_bubble_is_a_new_quick_access_action_on_both():
     assert "ATT Building Console" in read("quest/Bubble.cs")
     assert "ATT Building Console" in read("pchost/Bubble.cs")
     assert "ConsoleOpener.Toggle" in read("quest/Bubble.cs") + read("pchost/Bubble.cs")
     assert "quickAccessMenus" in read("quest/Bubble.cs") and "quickAccessMenus" in read("pchost/Bubble.cs")
+
+def test_versions_aligned():
+    for f in ("quest/Main.cs", "pchost/Main.cs"):
+        assert 'Version = "0.5.0"' in read(f), f
+    for p in ("quest/Properties/AssemblyInfo.cs", "pchost/Properties/AssemblyInfo.cs"):
+        assert '"0.5.0.0"' in read(p), p
 
 
 def test_reported_build_errors_stay_fixed():
@@ -144,45 +223,23 @@ def test_reported_build_errors_stay_fixed():
         spawner = read(f"{proj}/Spawner.cs")
         assert "PrefabNicks.TryGet" in spawner and "PrefabNicks.Set" in spawner and "PrefabNicks.Delete" in spawner
         assert spawner.index("PrefabNicks.TryGet") < spawner.index("partials == 1")  # nick beats substring ambiguity
-    # Remote-spawn tracking + grab fix + console grab ball (0.4.7): the
-    # server returns spawned entity Identifiers in the reply; the client
-    # adopts those entities as they stream in (else spawned/clear/build
-    # mode saw nothing and reported '0 spawned'); clear asks the server to
-    # destroy only the requester's own; EnsureGrabbable does the full
-    # Pickup field fixup plus a native surface GrabPoint (ArmorSurfaceGrip
-    # idea); the console gets a grab ball child.
+    # Remote-spawn tracking (0.4.7): the server returns spawned entity
+    # Identifiers in the reply; the client adopts those entities as they
+    # stream in (else spawned/clear saw nothing and reported '0 spawned');
+    # clear asks the server to destroy only the requester's own. 0.5.0 adds
+    # the single-piece DespawnOne for the tablet's DELETE button.
     assert "out uint entityId" in read("pchost/ServerCommands.cs") and "DespawnForPlayer" in read("pchost/ServerCommands.cs")
     for proj in ("pchost", "quest"):
         net = read(f"{proj}/BuildNet.cs")
         assert "SendDespawn" in net and "TrackRemote" in net
         spawner = read(f"{proj}/Spawner.cs")
         assert "TickRemoteTracking" in spawner and "_pendingRemote" in spawner
-        mode = read(f"{proj}/BuildMode.cs")
-        assert "RotationMode.Surface" in mode and "FixupPickupFields" in mode and "childrenColliders" in mode
-        assert "ATTBuildingGrabHandle" in read(f"{proj}/ConsoleHook.cs")
-    # Quest BuildMode once declared 'var added = AddComponent(...)' inside
-    # the scope of 'bool added': CS0136 + bool->Component. Keep them apart.
-    assert "var addedComp = go.AddComponent" in read("quest/BuildMode.cs")
-    assert "var added = go.AddComponent" not in read("quest/BuildMode.cs")
-    # 0.4.8: the Quest grab fixup died in ConvertTo ('Object must implement
-    # IConvertible') because IL2CPP grabPoints is Il2CppReferenceArray, not
-    # GrabPoint[]. SetMember tries a direct set first; Quest builds the
-    # native array type; every fixup step logs its own failure.
-    assert "Il2CppReferenceArray<GrabPoint>" in read("quest/BuildMode.cs")
-    assert "TrySet(pickup, \"grabPoints\"" in read("pchost/BuildMode.cs")
+        assert "DespawnOne" in spawner and "SendDespawn(new[] { remoteId })" in spawner
+    # 0.4.8: SetMember name-guessing silently no-ops; it tries a direct set
+    # first (Convert.To on IL2CPP wrapper types throws IConvertible errors).
     for proj in ("pchost", "quest"):
         hook = read(f"{proj}/ConsoleHook.cs")
         assert "try { prop.SetValue(target, value, null); }" in hook and "try { field.SetValue(target, value); }" in hook
-    # Console flight fix: it must be a locked panel, not a loose
-    # zero-gravity physics body. It only unlocks while a local hand is
-    # actually interacting with its Pickup, then freezes on release.
-    for proj in ("pchost", "quest"):
-        hook = read(f"{proj}/ConsoleHook.cs")
-        assert "TickConsoleLock" in hook and "IsConsoleGrabbed" in hook
-        assert "body.isKinematic = true" in hook and "body.isKinematic = false" in hook
-        assert "UnityEngine.RigidbodyConstraints.FreezeAll" in hook
-        assert "locked in place until grabbed again" in hook
-        assert "movement unlocked only while held" in hook
     # 0.4.0 root causes from live logs:
     # - server spawn needs explicit module registration (ArmorRestored's
     #   CommandService.CommandCollection.Collect in a FirstInitialize seam)
@@ -193,15 +250,14 @@ def test_reported_build_errors_stay_fixed():
     open_seg = qb[qb.index("EquipmentOpenSuppress"):qb.index("EquipmentPrefix", qb.index("EquipmentOpenSuppress"))]
     assert "ConsoleOpener.Toggle" not in open_seg and "_runPatched" in qb
     assert "if (_runPatched) return;" in qb  # poll stands down when Run patched
-    # - runtime Pickup needs its editor-injected fields filled, and the
-    #   post-command refocus is a delayed off/on cycle, not an instant call.
+    # - the post-command refocus is a delayed off/on cycle, not an instant call.
     for proj in ("pchost", "quest"):
         hook = read(f"{proj}/ConsoleHook.cs")
-        assert "FixupPickup" in hook and '"childrenColliders"' in hook and '"rigidbody"' in hook
         assert "ProcessRefocus" in hook and "_refocusAt" in hook
     # 0.3.0 user requests: dummy suppression patches ONLY the concrete
     # EquipmentModeQuickAccess (never the base class), console spawns a tad
-    # up, is grabbable, and the input is refocused/respawned after commands.
+    # up, and the input is refocused/respawned after commands. (The console
+    # grab handle from this era is deleted in 0.5.0: no grabbing anywhere.)
     for proj in ("pchost", "quest"):
         bubble = read(f"{proj}/Bubble.cs")
         assert "EquipmentModeQuickAccess" in bubble and "EquipmentPrefix" in bubble
@@ -209,8 +265,8 @@ def test_reported_build_errors_stay_fixed():
         assert "SuppressDummy" in bubble
         hook = read(f"{proj}/ConsoleHook.cs")
         assert "UnityEngine.Vector3.up * 0.12f" in hook and "Vector3.down * 0.25f" not in hook
-        assert "EnsureMovable" in hook and "RefocusInput" in hook and "respawned after command" in hook
-        assert "ADD_Pickup" not in hook
+        assert "RefocusInput" in hook and "respawned after command" in hook
+        assert "ADD_Pickup" not in hook and "EnsureMovable" not in hook
     # Crash discipline, round 2 (crash ON menu open): no Harmony patches on
     # QuickAccessMenuAction Run/Open in either build (ArmorUpdate leaves
     # Run/Open/Close untouched) -- activation is polled bool state instead.
@@ -248,7 +304,7 @@ def test_reported_build_errors_stay_fixed():
     # sibling ATTBuildingQuest, so any quest file naming one must import it
     # (the PC files share the namespace and need no using).
     shared_types = ("BuildState", "TrackedRegistry", "VectorSnap", "ParsedCommand", "CommandParser")
-    for name in ("Main.cs", "ConsoleHook.cs", "Spawner.cs", "BuildMode.cs"):
+    for name in ("Main.cs", "ConsoleHook.cs", "Spawner.cs", "Builder.cs"):
         src = read(f"quest/{name}")
         assert any(s in src for s in shared_types), name
         assert "using ATTBuilding;" in src, name
@@ -272,108 +328,6 @@ def test_reported_build_errors_stay_fixed():
         hook = read(f"{proj}/ConsoleHook.cs")
         assert "object field" in hook and "ReadInputText(field)" in hook
         assert "(RuntimeConsole __instance, InputField" not in hook
-
-def test_grab_pipeline_instrumented():
-    for f in ("quest/BuildMode.cs", "pchost/BuildMode.cs"):
-        s = read(f)
-        # CRASH REGRESSION (0.4.9 -> 0.4.10): Harmony-patching
-        # Pickup.AssessScore killed Quest ~5 s after launch -- the method
-        # takes a ref float and Harmony's IL2CPP wrapper emits invalid IL
-        # (InvalidProgramException in the DMD thunk). NEVER patch Pickup
-        # methods again; diagnostics are polling-only.
-        assert "HarmonyPatch(typeof(Pickup)" not in s, f
-        assert "NoteGrabCheck" not in s, f
-        # polling diagnostics: state transitions + hand proximity, tracked only
-        assert "PollGrabDiag" in s, f
-        assert "grabdiag:" in s, f
-        assert "TrackedRegistry.Snapshot()" in s, f
-        # 0.4.13: Awake can never complete on a runtime-added Pickup
-        # (Initialize dies at add_Undocked), so Initialize is gated on the
-        # entity NOT being linked, and Awake's collection setup is
-        # replicated by hydration instead
-        # 0.4.15: hydration pre-creates what Awake died on, so the real
-        # Initialize() is retried (it may now complete genuine Awake state)
-        assert "Initialize() RAN" in s, f
-        # 0.4.14: field-only hydration was blind on IL2CPP (native fields
-        # surface as properties), so hydration walks fields AND properties
-        assert "HydratePickupGraph(pickup)" in s, f
-        assert 'DumpNullMembers(pickup, "still null")' in s, f
-        assert "HydratePickupFields" not in s, f
-        assert "grabdiag ref:" in s, f
-        # 0.4.14: whole-mesh grabbing -- many surface GrabPoints (the user
-        # requires grabbing anywhere on the mesh), each wired back to its
-        # Pickup, and a one-shot reflective dump of the grab pipeline so the
-        # game's own scoring can be invoked without Harmony
-        assert "InstallSurfaceGrabPoints(go, pickup)" in s, f
-        assert "whole-mesh grab" in s, f
-        # 0.4.15: GrabPoint has no owner member (0.4.14 sig dump) -- wire
-        # its serialized transform instead, and run the game's own
-        # scoring reflectively (never Harmony on ref/out methods)
-        assert "WireGrabPoint(gp, pickup)" in s, f
-        assert "grabprobe " in s, f
-        assert "InvokeProbe(pickup, \"AssessScore\"" in s, f
-        assert "refnull" in s, f
-        assert 'SafeMember(pickup, "IsInteractable")' in s, f
-        # 0.4.16: direct scoring says grabbable, yet only prefab-native
-        # Pickups grab -- so learn from a native one: profile ours vs
-        # native (collider layers / GrabPoint members), capture its
-        # GrabPoint design values + layers as a template, retrofit ours.
-        assert "DumpObjectProfile" in s, f
-        assert "CaptureNativeTemplate(go, pickup)" in s, f
-        assert "CopyGrabPointTemplate(gp)" in s, f
-        assert "ApplyNativeTemplateTo(go, pickup)" in s, f
-        # NOT direct assignment: Mono GrabPoint lacks those member
-        # names (0.4.16 PC build error) -- reflective walker only
-        assert "gp.position" not in s, f
-        assert 'TrySetMemberWalk(gp, "position", p)' in s, f
-        assert "DumpInteractorMembers(hand)" in s, f
-        # never hydrate bestGrab/dockedMemory: null natively, and an
-        # invented empty GrabPoint evaluates at the world origin
-        assert '"bestGrab", "BestGrab", "dockedMemoryLeft", "dockedMemoryRight"' in s, f
-        # dynamic station pieces fell through the world: freeze ours
-        assert "FreezeBody(go, pickup)" in s, f
-        # 0.4.18: match native exactly (GrabPoint transform cleared, not
-        # wired), never re-layer trigger colliders, read the hand's own
-        # discovery list, A/B/C the GrabPoint design per probe, and the
-        # backup dwell-grab ("grab legit everything") with manual carry
-        assert "TryClearMemberWalk(gp, \"transform\")" in s, f
-        assert "!col.isTrigger" in s, f
-        assert "DumpHandScan(hand, pickup)" in s, f
-        assert "handscan:" in s, f
-        assert '"_OverlapInteractables"' in s, f
-        assert "VariantName(_installVariant)" in s, f
-        assert "B-single-native" in s, f
-        assert "PollBackupGrab()" in s, f
-        assert "backupgrab:" in s, f
-        assert "TryGameGrab(pickup, hand)" in s, f
-        assert "MANUAL CARRY" in s, f
-        # 0.4.19: template captured from any scene Pickup (not only a
-        # spawned Stick), grabPointsScale templated too, winning
-        # bestGrab dumped per probe, manual carry waits out the game's
-        # delayed native hold before engaging
-        assert "CaptureNativeTemplate(best.gameObject, best)" in s, f
-        assert "_templateGrabPointsScale" in s, f
-        assert "bestgrab " in s, f
-        assert "_pendingGrabEngageAt" in s, f
-        assert "before manual carry" in s, f
-        assert "DumpGrabSignatures(pickup)" in s, f
-        assert "sig: " in s, f
-        # ... and Pickup.Colliders (populated by Awake, which ran too early)
-        assert 'Call(pickup.Colliders, "Add", c)' in s, f
-        assert "entityLinked=" in s, f
-        # 0.4.11: runtime Pickups start disabled + entity-unlinked; link the
-        # NetworkEntity first, force enabled, then Initialize (in that order)
-        # 0.4.12: SetMember name-guessing silently no-ops; walk the type
-        # hierarchy, try every NetworkEntity-typed member, verify by read-back
-        assert "LinkEntity(pickup, netEntity)" in s, f
-        assert "field.FieldType != typeof(NetworkEntity)" in s, f
-        assert "DumpEntityMembers(pickup, netEntity)" in s, f
-        # poller reads each property defensively (get_IsDocked NREs pre-Awake)
-        assert 'Safe(() => pickup.IsDocked)' in s, f
-        assert "pickup.enabled = true" in s, f
-        assert "hasNetEntity=" in s, f
-    for f in ("quest/Main.cs", "pchost/Main.cs"):
-        assert 'Version = "0.4.19"' in read(f), f
 
 
 if __name__ == "__main__":

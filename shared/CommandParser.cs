@@ -115,11 +115,11 @@ namespace ATTBuilding
         public static readonly string[] HelpLines =
         {
             "build spawn <prefab name> [count] - spawn a prefab in front of you, e.g. build spawn wooden plank",
-            "build mode on|off - build mode: console-spawned objects can be grabbed and moved like items (backup: hold a free hand on a spawned piece for ~1s to force-grab it; if manual carry engages, hold your hand still ~1s to put it down)",
-            "snapping true|false - while moving a spawned object it stays at set angles (straight)",
+            "build mode on|off - build mode: open the Prefabulizer bubble on your wrist wheel for the build tablet; point the finger ray at a spawned piece and pull the trigger to control it (no grabbing)",
+            "snapping true|false - tablet moves/rotates keep the piece at set angles (straight) and on the position grid",
             "build snapangle <deg> - angle increment for snapping (default 15, use 45 for coarse)",
-            "build grid <metres> - position grid applied when you let go (default 0.25, 0 = off)",
-            "build livesnap true|false - also snap position every frame while held (can fight the hand joint)",
+            "build grid <metres> - position grid applied to tablet moves when snapping is on (default 0.25, 0 = off)",
+            "build livesnap true|false - legacy toggle: tablet moves always snap live, so this no longer changes anything",
             "build list [filter] - loaded prefab names you can spawn",
             "build spawned - how many console-spawned objects are tracked for build mode",
             "build ping - ask the server whether ATTBuilding is installed/registered there (reply shows its version)",

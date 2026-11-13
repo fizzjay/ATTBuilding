@@ -43,7 +43,18 @@
     <Compile Include="..\shared\VectorSnap.cs"><Link>VectorSnap.cs</Link></Compile>
     <Compile Include="Bubble.cs" />
     <Compile Include="BuildNet.cs" />
-    <Compile Include="BuildMode.cs" />
+    <Compile Include="Builder.cs" />
+    <!-- Provided TabletUILib (Quest copy). TabletUIMod.cs (standalone MelonMod) and
+         Properties\AssemblyInfo.cs are deliberately excluded: Main does the wiring. -->
+    <Compile Include="..\tabletquest\TabletUILib\BubbleAction.cs"><Link>TabletUILib\BubbleAction.cs</Link></Compile>
+    <Compile Include="..\tabletquest\TabletUILib\BubbleEntry.cs"><Link>TabletUILib\BubbleEntry.cs</Link></Compile>
+    <Compile Include="..\tabletquest\TabletUILib\Icons.cs"><Link>TabletUILib\Icons.cs</Link></Compile>
+    <Compile Include="..\tabletquest\TabletUILib\Page.cs"><Link>TabletUILib\Page.cs</Link></Compile>
+    <Compile Include="..\tabletquest\TabletUILib\Row.cs"><Link>TabletUILib\Row.cs</Link></Compile>
+    <Compile Include="..\tabletquest\TabletUILib\TabletBubble.cs"><Link>TabletUILib\TabletBubble.cs</Link></Compile>
+    <Compile Include="..\tabletquest\TabletUILib\TabletUI.cs"><Link>TabletUILib\TabletUI.cs</Link></Compile>
+    <Compile Include="..\tabletquest\TabletUILib\TabletView.cs"><Link>TabletUILib\TabletView.cs</Link></Compile>
+    <Compile Include="..\tabletquest\TabletUILib\TabletWheel.cs"><Link>TabletUILib\TabletWheel.cs</Link></Compile>
     <Compile Include="ConsoleHook.cs" />
     <Compile Include="Main.cs" />
     <Compile Include="NativeSnapshot.cs" />

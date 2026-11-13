@@ -45,17 +45,51 @@ Each is isolated in one file per platform, deliberately:
 - `Spawner.cs` -- `PrefabManager.AllPrefabs`, `SpawnHelper.Spawn`,
   `NetworkSceneManager.IsServer/IsLocalTest`, `CommandSync.RouteCommand`
   (server fallback). Server twin: `pchost/ServerCommands.cs`.
+- `Builder.cs` + the provided `TabletUILib` (`tabletquest/`, `tabletpc/`) --
+  the Social Tablet pages, the wrist-wheel bubble injection, and (in
+  `Builder.TriggerInput`) the XR trigger, read purely by reflection so no
+  project needs a `UnityEngine.XRModule` reference. The library's standalone
+  `TabletUIMod.cs` entrypoint is **not** compiled into either project --
+  `Main.cs` does the patch/register/tick wiring itself, so nothing is
+  patched twice. PC additionally compiles the library's `ServerMods.cs`,
+  which needs a `TavernLib` reference (already in the PC project's list).
+  If the Quest build reports a missing `Il2CppAlta.*` type used by the
+  library (`SocialTablet`, `QuickAccessMenuBubble`, ...), add that interop
+  assembly from your `refs/quest` folder to `quest/ATTBuilding.csproj` --
+  the tablet code is the only consumer.
+
+## Build mode (0.5.0): Prefabulizer tablet, no grabbing
+
+The 0.1-0.4 hand-grab pipeline is deleted. Build mode now works like this:
+
+- Wrist wheel -> **Prefabulizer** bubble summons the game's Social Tablet
+  with the Prefabulizer pages (built on the provided TabletUILib). Opening
+  it turns build mode on; `build mode on` in the console does the same and
+  arms the finger ray immediately.
+- **Finger ray** (tablet toggle): a ray leaves the pointer fingertip (or
+  hand origin when the rig has no fingertip bone). Hovering one of *our*
+  spawned prefabs lights up its **actual meshes** amber (cloned materials
+  with an emissive pulse -- never a bounding box); pulling the trigger
+  selects it (steady green) and the tablet's **Move / Rotate / Scale**
+  pages drive it. Point + trigger another piece to switch. On rigs where
+  the XR trigger can't be resolved, holding the ray on a piece for ~1.25 s
+  selects it instead (dwell-select; logged once).
+- The selected piece's rigidbodies are made kinematic while controlled, so
+  a build piece can never fall through the world mid-edit (there is a
+  "Frozen" toggle per control page to hand physics back).
+- Snapping is unchanged maths (`shared/SnapMath.cs`): with snapping on,
+  tablet moves land on the position grid and rotations quantise to the
+  snap angle, so pieces stay straight.
 
 ## Known best-effort behaviour
 
-- Prefabs that already have a `Pickup` (most items/props) grab natively in
-  build mode. A spawned prefab with **no** `Pickup` gets a runtime
-  `Rigidbody`+`Pickup`; with no author-defined grab points it uses the game's
-  free-grab fallback and may sit oddly in the hand -- rotation snapping still
-  applies. This is logged when it happens.
-- Live rotation snapping runs every frame while held; final placement is
-  re-snapped (rotation + grid) and velocities zeroed on release, which is the
-  part that guarantees the placed result is exactly straight.
+- The finger ray uses the local hands' `Interactor` transforms; direction
+  is the hand's forward. If a fingertip bone (`*index*tip*`, `*pointer*`)
+  exists it is used as the ray origin, otherwise the hand origin is.
+- Only prefabs this mod spawned (console or server-routed) can be
+  selected; the ray ignores everything else, including world items.
+- The console panel is static where it is summoned (in front of you): the
+  old grab ball / grab-to-move console went away with the rest of grabbing.
 
 ## Troubleshooting the three classic first-build errors
 

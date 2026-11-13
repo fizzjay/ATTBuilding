@@ -17,6 +17,9 @@ namespace ATTBuilding
     // lives in pchost/ServerCommands.cs:  build spawn <player> <prefabHash>
     internal static class Spawner
     {
+        // Last prefab resolved by SpawnByName (the Prefabulizer's "Spawn another").
+        internal static string LastSpawnName;
+
         internal static NetworkPrefab Resolve(string name, out string error)
         {
             error = null;
@@ -69,6 +72,7 @@ namespace ATTBuilding
             string error;
             NetworkPrefab prefab = Resolve(name, out error);
             if (prefab == null) { Diag.Log("spawn: resolve failed for '" + name + "': " + error); print(error); return; }
+            LastSpawnName = Clean(prefab.name);
             Diag.Log("spawn: resolved '" + name + "' -> '" + Clean(prefab.name) + "' hash=" + prefab.Hash + " count=" + count
                 + " authority[" + AuthorityDescription() + "] localPlayer[" + LocalPlayerDescription() + "]");
             if (!HasAuthority())
@@ -91,7 +95,7 @@ namespace ATTBuilding
             int done = SpawnAuthoritative(prefab, at, rot, count);
             Diag.Log("spawn: local authority result: " + done + "/" + count + " spawned.");
             print(done > 0
-                ? "Spawned " + Clean(prefab.name) + " x" + done + (BuildState.BuildMode ? " (build mode: grab it to move it)" : " (build spawn is tracked; 'build mode on' lets you grab it)")
+                ? "Spawned " + Clean(prefab.name) + " x" + done + (BuildState.BuildMode ? " (build mode: point the finger ray at it and pull the trigger -- the Prefabulizer tablet controls it)" : " (tracked; 'build mode on' + the Prefabulizer tablet can select and move it)")
                 : "Spawn failed (server refused or prefab cannot be spawned here).");
         }
 
@@ -174,7 +178,7 @@ namespace ATTBuilding
         // The server replies with the network Identifier of each entity it
         // spawned for us. Those entities stream in asynchronously, so keep
         // them pending and adopt them as they appear: only then do 'build
-        // spawned', 'build clear' and build-mode grabbing know about them
+        // spawned', 'build clear' and the Prefabulizer tablet know about them
         // (before 0.4.7 the client tracked nothing and reported 0 spawned).
         private static readonly System.Collections.Generic.HashSet<uint> _remoteIds = new System.Collections.Generic.HashSet<uint>();
         private static readonly System.Collections.Generic.Dictionary<uint, float> _pendingRemote = new System.Collections.Generic.Dictionary<uint, float>();
@@ -234,7 +238,42 @@ namespace ATTBuilding
             TrackedRegistry.Add(entity.gameObject.GetInstanceID());
             var pickup = entity.gameObject.GetComponentInChildren<Pickup>();
             if (pickup != null) TrackedRegistry.Add(pickup.gameObject.GetInstanceID());
-            if (BuildState.BuildMode) BuildMode.EnsureGrabbable(entity.gameObject);
+        }
+
+        // Remove ONE tracked piece (the Prefabulizer's DELETE button).
+        // Mirrors ClearSpawned: server-side entities go through BuildNet,
+        // local ones are destroyed authoritatively.
+        internal static bool DespawnOne(int instanceId, Action<string> print)
+        {
+            uint remoteId;
+            if (_remoteIdByInstance.TryGetValue(instanceId, out remoteId))
+            {
+                var keys = new System.Collections.Generic.List<int>();
+                foreach (var pair in _remoteIdByInstance) if (pair.Value == remoteId) keys.Add(pair.Key);
+                foreach (int key in keys) { _remoteIdByInstance.Remove(key); TrackedRegistry.Remove(key); }
+                _remoteIds.Remove(remoteId);
+                _pendingRemote.Remove(remoteId);
+                TrackedRegistry.Remove(instanceId);
+                if (BuildNet.SendDespawn(new[] { remoteId })) print("Asked the server to remove that piece...");
+                else print("Could not reach the server to remove that piece (it may still be in the world).");
+                return true;
+            }
+            var go = FindByInstanceId(instanceId);
+            TrackedRegistry.Remove(instanceId);
+            if (go == null) return false;
+            try
+            {
+                var nested = go.GetComponentInChildren<Pickup>();
+                if (nested != null) TrackedRegistry.Remove(nested.gameObject.GetInstanceID());
+                TrackedRegistry.Remove(go.GetInstanceID());
+                var prefab = go.GetComponent<NetworkPrefab>();
+                var entity = prefab == null ? null : prefab.Entity;
+                if (HasAuthority() && entity != null && entity.Spawner != null) entity.Spawner.Destroy(entity, false);
+                else UnityEngine.Object.Destroy(go);
+            }
+            catch (Exception ex) { Mod.LogOnce("despawn one: " + ex.Message); return false; }
+            print("Removed that piece.");
+            return true;
         }
 
         internal static void ClearSpawned(Action<string> print)

@@ -27,9 +27,17 @@ namespace ATTBuildingQuest
                 if (Mod.ConsoleEnabled) Mod.Log.Msg(ConsoleHook.Apply(harmony)); else Mod.Log.Msg("console: OFF (pref) -- hooks skipped.");
                 if (Mod.BubbleEnabled) Mod.Log.Msg(Bubble.Apply(harmony)); else Mod.Log.Msg("bubble: OFF (pref) -- quick-access bubble skipped. Set BubbleEnabled on and restart to bisect a crash.");
                 Mod.Log.Msg(BuildNet.Install(harmony));
+                try
+                {
+                    TabletUILib.TabletUI.Patch(harmony);
+                    TabletUILib.TabletWheel.Patch(harmony);
+                    Builder.RegisterTablet();
+                    Mod.Log.Msg("tablet: Prefabulizer ready (wrist wheel -> Prefabulizer summons the build tablet).");
+                }
+                catch (Exception tex) { Diag.Log("tablet: registration FAILED (build tablet unavailable): " + tex); }
 
                 _running = true;
-                Mod.Log.Msg("ATTBuilding " + Mod.Version + " started (Quest IL2CPP). Open the wrist menu and pick the 'ATT Building Console' bubble, then: build help");
+                Mod.Log.Msg("ATTBuilding " + Mod.Version + " started (Quest IL2CPP). Wrist wheel: 'ATT Building Console' bubble for the console, 'Prefabulizer' bubble for the build tablet. No grabbing -- point, trigger, build.");
             }
             catch (Exception ex) { Mod.Log.Error("failed to start, staying off: " + ex); }
         }
@@ -43,7 +51,7 @@ namespace ATTBuildingQuest
                 Diag.FileOnly("heartbeat: bubbleAdded=" + Bubble.Added + ", buildMode=" + BuildState.BuildMode + ", tracked=" + TrackedRegistry.Count);
             }
             try { Bubble.Tick(); } catch (Exception e) { Mod.LogOnce("bubble: " + e.Message); }
-            try { BuildMode.Tick(); } catch (Exception e) { Mod.LogOnce("buildmode: " + e.Message); }
+            try { Builder.Tick(); } catch (Exception e) { Mod.LogOnce("builder: " + e.Message); }
             try { Spawner.TickRemoteTracking(); } catch { }
             try { ConsoleHook.TickTimeout(); } catch { }
         }
@@ -51,7 +59,7 @@ namespace ATTBuildingQuest
 
     internal static class Mod
     {
-        internal const string Version = "0.4.19";
+        internal const string Version = "0.5.0";
         internal static bool BubbleEnabled = true;
         internal static bool ConsoleEnabled = true;
         internal static bool SuppressDummy = true;

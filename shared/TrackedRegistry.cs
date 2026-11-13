@@ -2,8 +2,9 @@ using System.Collections.Generic;
 
 namespace ATTBuilding
 {
-    // Everything THIS console spawned. Only these objects become grabbable in
-    // build mode -- pre-existing world items are never touched.
+    // Everything THIS console spawned. Only these objects can be selected by
+    // the build-mode finger ray and driven from the Prefabulizer tablet --
+    // pre-existing world items are never touched.
     // Keys are Unity gameObject instance ids (stable per live object).
     public static class TrackedRegistry
     {

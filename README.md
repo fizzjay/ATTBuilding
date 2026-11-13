@@ -16,11 +16,11 @@ Console** bubble. That summons the game's console in front of you. Type:
 | `build spawn <prefab name> [count]` (or just `spawn <name>`) | Spawns that prefab on the ground in front of you. Names match `PrefabManager` prefabs, case-insensitively; a hash works too. |
 | `build nick <prefab name\|id> <nickname>` | Saves a personal nickname for a prefab, e.g. `build nick anvil anv` -- then `spawn anv` spawns an Anvil. Nicknames live in `UserData/ATTBuilding/nicks.txt` on your own machine and work anywhere you play. |
 | `build nicks` / `build del nick <nickname>` | List your saved prefab nicknames / delete one. |
-| `build mode on` / `buildmode on` | **Build mode**: anything *this console spawned* can be grabbed and moved exactly like an item. World items are never touched. |
-| `snapping true` / `snapping false` | While you move a spawned object, its rotation is locked to set angles, so it stays straight — you can still point it any way, just on the angle steps. |
+| `build mode on` / `buildmode on` | **Build mode** (tablet edition): arms the finger ray. Open the **Prefabulizer** bubble on your wrist wheel for the build tablet — point the ray at anything *this console spawned*, pull the trigger, and the tablet's Move/Rotate/Scale pages drive it. No grabbing; world items are never touched. |
+| `snapping true` / `snapping false` | Tablet moves/rotates land on the angle steps and position grid, so pieces stay straight. |
 | `build snapangle <deg>` | Angle step (default `15`; `45` is coarser, `0` disables rotation snapping). |
-| `build grid <metres>` | Position grid applied when you let go (default `0.25`, `0` = off). |
-| `build livesnap true` | Also snap position every frame while held (off by default — it can fight the hand joint). |
+| `build grid <metres>` | Position grid applied to tablet moves while snapping is on (default `0.25`, `0` = off). |
+| `build livesnap true` | Legacy toggle — tablet moves always snap live now, so this changes nothing. |
 | `build list [filter]` | Prefab names/hashes you can spawn. |
 | `build spawned` | How many console-spawned objects are tracked. |
 | `build clear` | Remove everything this console spawned. |
