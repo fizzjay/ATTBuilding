@@ -21,12 +21,15 @@ namespace ATTBuildingQuest
     //     summons the game's Social Tablet showing our control pages;
     //   * a toggle on the tablet turns on a ray from the local player's
     //     pointer finger; hovering one of OUR spawned prefabs (and only
-    //     those -- TrackedRegistry) lights up its actual meshes;
+    //     those -- TrackedRegistry) frames it with a wire box outline;
     //   * pulling the trigger (XR trigger via reflection; dwell-select as a
     //     fallback) makes that prefab the thing the tablet controls;
     //   * MOVE / ROTATE / SCALE pages then nudge the selected prefab.
-    // Per-frame cost while building: at most two raycasts plus transform
-    // reads -- no scene scans, no collection walks.
+    // Per-frame cost while building: the ray/dot visuals only. Targeting
+    // runs at 10 Hz and is pure AABB float math over cached per-piece
+    // probes -- NO physics raycast of any kind, NO material work, NO file
+    // IO. (Cloned-material glow + Collider.Raycast + hover logging all
+    // turned out to be frame killers on Quest; see BUILD.md 0.5.4.)
     internal static class Builder
     {
         // ---- tablet wiring ------------------------------------------------
@@ -48,6 +51,7 @@ namespace ATTBuildingQuest
             TabletBubble bubble = TabletUI.AddBubble("Prefabulizer", "PFB");
             bubble.App("Prefabulizer", "PFB", ControlHomeFunc);
             TabletUI.AddApp("Prefab Settings", "SET", SettingsHomeFunc);
+            try { TriggerInput.Warm(); } catch { } // resolve XR types now, at load -- never during a hover
             Diag.Log("builder: Prefabulizer (control) + Prefab Settings tablets registered on the wrist wheel.");
         }
 
@@ -55,7 +59,7 @@ namespace ATTBuildingQuest
         {
             BuildState.BuildMode = on;
             RayOn = on; // entering build mode arms the finger ray immediately
-            if (!on) { ClearLit(); HideFx(); _hover = null; }
+            if (!on) { HideOutline(); HideFx(); _hover = null; }
             Diag.Log("builder: build mode " + (on ? "ON (finger ray armed; Prefabulizer tablet controls the selected piece)" : "off") + ".");
         }
 
@@ -336,22 +340,37 @@ namespace ATTBuildingQuest
             ValidateSelection();
             if (!BuildState.BuildMode)
             {
-                _hover = null; ClearLit(); HideFx(); _dwellId = 0;
+                _hover = null; HideOutline(); HideFx(); _dwellId = 0;
                 return;
             }
             if (!RayOn)
             {
-                _hover = null; UpdateSelectedGlow(); HideFx(); _dwellId = 0;
+                _hover = null; SyncOutline(); HideFx(); _dwellId = 0;
                 return;
             }
-            // Perf: the expensive part -- ONE raycast from the ray hand plus
-            // the trigger poll -- runs at 20 Hz. The visible line/dot follow
-            // the hand every frame from the cached result, so aiming still
-            // feels instant but the physics cost drops ~10x.
+            // Targeting at 10 Hz; the visible line/dot still follow the hand
+            // every frame from the cached result, so aiming feels instant.
+            // The tick is timed: a one-line perf report lands in debug.log
+            // every 15 s so hover cost is measured, never guessed.
             if (Time.unscaledTime >= _nextRayTick)
             {
-                _nextRayTick = Time.unscaledTime + 0.05f;
+                _nextRayTick = Time.unscaledTime + 0.1f;
+                _perfWatch.Restart();
                 UpdateRaycast();
+                SyncOutline();
+                _perfWatch.Stop();
+                double ms = _perfWatch.Elapsed.TotalMilliseconds;
+                _perfTicks++; _perfMsTotal += ms; if (ms > _perfMsMax) _perfMsMax = ms;
+            }
+            if (Time.unscaledTime >= _perfNextReport)
+            {
+                _perfNextReport = Time.unscaledTime + 15f;
+                if (_perfTicks > 0)
+                    Diag.FileOnly("builder perf: raytick avg " + (_perfMsTotal / _perfTicks).ToString("0.00", CultureInfo.InvariantCulture)
+                        + " ms, max " + _perfMsMax.ToString("0.00", CultureInfo.InvariantCulture)
+                        + " ms over " + _perfTicks + " ticks; probes=" + _probes.Count
+                        + ", hoverChanges=" + _perfHoverChanges + ", triggerFailStreak=" + TriggerInput.FailStreak);
+                _perfTicks = 0; _perfMsTotal = 0; _perfMsMax = 0; _perfHoverChanges = 0;
             }
             UpdateRayVisual();
         }
@@ -364,7 +383,7 @@ namespace ATTBuildingQuest
 
         private static void ClearSelection()
         {
-            if (_litRoot == _selected) ClearLit();
+            if (_outlineRoot == _selected) HideOutline();
             _selected = null; _selectedId = 0; _scaleFactor = 1f;
         }
 
@@ -378,10 +397,12 @@ namespace ATTBuildingQuest
         private sealed class Probe
         {
             public GameObject Root;
-            public Collider[] Colliders;
+            public Collider[] Colliders; // cached for AfterEdit rebuilds only -- never touched by the ray tick
             public Bounds Box;
             public Vector3 Anchor; // root position when the box was computed
+            public int RegistryId = -1;
         }
+        private static readonly System.Collections.Generic.HashSet<int> _knownRegistryIds = new System.Collections.Generic.HashSet<int>();
 
         private static readonly System.Collections.Generic.Dictionary<int, Probe> _probes = new System.Collections.Generic.Dictionary<int, Probe>();
         internal static bool ProbesDirty = true; // set by Spawner whenever tracking changes
@@ -406,25 +427,44 @@ namespace ATTBuildingQuest
             pr.Colliders = fresh.Colliders; pr.Box = fresh.Box; pr.Anchor = fresh.Anchor;
         }
 
+        // Incremental: only NEW registry ids pay a scene lookup, once.
+        // (The old version cleared the table and re-scanned the whole
+        // scene -- FindObjectsOfType over every NetworkPrefab -- on every
+        // tracking change.)
         private static void SyncProbes()
         {
-            _probes.Clear();
-            var seen = new System.Collections.Generic.HashSet<int>();
-            foreach (int id in TrackedRegistry.Snapshot())
+            var ids = TrackedRegistry.Snapshot();
+            var alive = new System.Collections.Generic.HashSet<int>(ids);
+            var stale = new List<int>();
+            foreach (int id in _knownRegistryIds) if (!alive.Contains(id)) stale.Add(id);
+            if (stale.Count > 0)
             {
+                foreach (int id in stale) _knownRegistryIds.Remove(id);
+                var deadRoots = new List<int>();
+                foreach (var kv in _probes) if (stale.Contains(kv.Value.RegistryId)) deadRoots.Add(kv.Key);
+                foreach (int rid in deadRoots) _probes.Remove(rid);
+            }
+            foreach (int id in ids)
+            {
+                if (_knownRegistryIds.Contains(id)) continue;
                 var go = Spawner.FindByInstanceId(id);
-                if (go == null) continue;
+                if (go == null) continue; // not streamed in yet; retried next sync
+                _knownRegistryIds.Add(id);
                 int rid = go.GetInstanceID();
-                if (seen.Add(rid)) _probes[rid] = BuildProbe(go);
+                if (!_probes.ContainsKey(rid)) { var pr = BuildProbe(go); pr.RegistryId = id; _probes[rid] = pr; }
             }
             ProbesDirty = false;
-            PruneLitCache();
         }
 
         // ---- finger ray (right hand by default; Settings can flip it) --------
         private static Transform _handR, _handL, _tipR, _tipL;
         private static int _handOwnerId;
         private static float _nextRayTick;
+        private static float _nextProbeSync;
+        private static float _nextHandTry;
+        private static readonly System.Diagnostics.Stopwatch _perfWatch = new System.Diagnostics.Stopwatch();
+        private static int _perfTicks; private static double _perfMsTotal; private static double _perfMsMax;
+        private static int _perfHoverChanges; private static float _perfNextReport;
         private static Vector3 _hitPoint;
         private static bool _hasHit;
 
@@ -480,8 +520,9 @@ namespace ATTBuildingQuest
             Transform t = RayHand == 0 ? _handR : _handL;
             tip = RayHand == 0 ? _tipR : _tipL;
             if (t == null) { t = RayHand == 0 ? _handL : _handR; tip = RayHand == 0 ? _tipL : _tipR; }
-            if (t == null)
+            if (t == null && Time.unscaledTime >= _nextHandTry)
             {
+                _nextHandTry = Time.unscaledTime + 1f;
                 AcquireHands();
                 t = RayHand == 0 ? _handR : _handL;
                 tip = RayHand == 0 ? _tipR : _tipL;
@@ -519,45 +560,42 @@ namespace ATTBuildingQuest
             return null;
         }
 
-        // Runs at 20 Hz (see Tick): no world physics -- box math against our
-        // pieces, then a mesh-accurate confirm on the winner's colliders.
+        // Runs at 10 Hz (see Tick). PURE MATH: a slab test against each
+        // tracked piece's cached world AABB. No Physics.Raycast, no
+        // Collider.Raycast, no scene queries, no allocations, no logging.
+        // A piece moved by someone else just slides its cached box along
+        // (rebuilds happen only on tablet edits, in AfterEdit).
         private static void UpdateRaycast()
         {
             Transform tip;
             var hand = RayHandTransform(out tip);
             if (hand == null) { SetHover(null); _hasHit = false; return; }
-            if (ProbesDirty) SyncProbes();
+            if (ProbesDirty || Time.unscaledTime >= _nextProbeSync) { _nextProbeSync = Time.unscaledTime + 5f; SyncProbes(); }
             Vector3 origin = tip != null ? tip.position : hand.position;
             var ray = new Ray(origin, hand.forward);
-            GameObject best = null; float bestDist = float.MaxValue; Vector3 bestPoint = Vector3.zero;
+            GameObject best = null; float bestDist = float.MaxValue;
             foreach (var pair in _probes)
             {
                 var pr = pair.Value;
                 if (pr.Root == null) { ProbesDirty = true; continue; }
-                if ((pr.Root.transform.position - pr.Anchor).sqrMagnitude > 0.0001f) RefreshProbe(pr); // moved by someone else
-                bool inside = pr.Box.Contains(origin);
-                float d = 0f;
-                if (!inside && !pr.Box.IntersectRay(ray, out d)) continue;
-                if (inside) d = 0f;
-                if (d > RayLength) continue;
-                float confirmedDist = float.MaxValue; Vector3 confirmedPoint = Vector3.zero; bool anyUsable = false;
-                foreach (var c in pr.Colliders)
+                Vector3 delta = pr.Root.transform.position - pr.Anchor;
+                if (delta.sqrMagnitude > 0.0004f) // slid >2 cm: translate the box, never rebuild here
                 {
-                    if (c == null || !c.enabled || c.isTrigger) continue;
-                    anyUsable = true;
-                    RaycastHit ch;
-                    if (c.Raycast(ray, out ch, RayLength) && ch.distance < confirmedDist) { confirmedDist = ch.distance; confirmedPoint = ch.point; }
+                    var b = pr.Box; b.center = b.center + delta; pr.Box = b; pr.Anchor = pr.Root.transform.position;
+                    if (pr.Root == _outlineRoot) _outlineDirty = true;
                 }
-                float useDist; Vector3 usePoint;
-                if (confirmedDist != float.MaxValue) { useDist = confirmedDist; usePoint = confirmedPoint; }
-                else if (inside) { useDist = 0f; usePoint = origin; }
-                else if (!anyUsable) { useDist = d; usePoint = origin + hand.forward * d; }
-                else continue; // grazed the box, missed the mesh
-                if (useDist < bestDist) { bestDist = useDist; best = pr.Root; bestPoint = usePoint; }
+                float d = 0f;
+                if (!pr.Box.Contains(origin) && !pr.Box.IntersectRay(ray, out d)) continue;
+                if (d > RayLength) continue;
+                if (d < bestDist) { bestDist = d; best = pr.Root; _hitPoint = origin + hand.forward * d; }
             }
-            if (best != null) { _hitPoint = bestPoint; _hasHit = true; } else _hasHit = false;
+            _hasHit = best != null;
             SetHover(best);
-            if (best != null) PollSelect(best);
+            // The trigger is polled once per tick whether or not the ray is
+            // on a piece, so press/release edges are always tracked cleanly
+            // (and the poll can never become hover-only work).
+            bool edge = TriggerInput.PressedEdge(RayHand);
+            if (best != null) PollSelect(best, edge);
         }
 
         private static void SetHover(GameObject root)
@@ -565,17 +603,16 @@ namespace ATTBuildingQuest
             if (root == _hover) return;
             _hover = root;
             _dwellId = 0;
-            if (root != null) Diag.FileOnly("builder: ray hovering '" + CleanName(root) + "' (trigger selects it).");
-            UpdateGlow();
+            _perfHoverChanges++; // counted for the perf report; NO logging here (file IO on hover flicker was a lag source)
         }
 
         // ---- selection trigger: XR trigger, dwell fallback ----------------------
         private static int _dwellId;
         private static float _dwellSince;
 
-        private static void PollSelect(GameObject target)
+        private static void PollSelect(GameObject target, bool triggerEdge)
         {
-            if (TriggerInput.PressedEdge(RayHand)) { Select(target); return; }
+            if (triggerEdge) { Select(target); return; }
             if (TriggerInput.Available) { _dwellId = 0; return; }
             // No XR trigger found on this rig: holding the ray steady on the
             // piece for ~1.25 s selects it instead (logged once at startup).
@@ -626,137 +663,86 @@ namespace ATTBuildingQuest
                 Note("Deleted '" + name + "'.");
         }
 
-        // ---- mesh highlight (the actual prefab meshes, never a box) --------------
-        // Materials are cloned ONCE per piece and cached: re-hovering just
-        // reassigns the cached arrays. No per-frame material calls at all
-        // (the old emissive pulse is gone -- steady glow reads cleaner too).
-        private sealed class LitCache
+        // ---- highlight: a wire box around the piece, zero material work ------
+        // The old glow cloned every material on the prefab (shader-variant
+        // compiles + sharedMaterials swaps on the Quest GPU -- a frame
+        // killer on big prefabs). Now: ONE reusable LineRenderer tracing
+        // the hovered/selected piece's cached bounds. Positions are only
+        // rewritten when the target or its box actually changes.
+        private static LineRenderer _outline;
+        private static GameObject _outlineRoot;
+        private static Color _outlineColor;
+        private static bool _outlineDirty = true;
+        // Cube-edge traversal (14 points, all 12 edges, two retraced):
+        // corners 0-3 bottom (y-), 4-7 top (y+) in BuildOutlineBox.
+        private static readonly int[] BoxPath = { 0, 1, 2, 3, 0, 4, 5, 6, 7, 3, 2, 6, 5, 1 };
+
+        private static void EnsureOutline()
         {
-            public Renderer[] Renderers;
-            public Material[][] Originals;
-            public Material[][] Sets;
-            public Material[] Clones;  // flat, parallel to Modes/OrigColors
-            public int[] Modes;        // 0 = untouched, 1 = emissive, 2 = colour-lerp
-            public Color[] OrigColors;
-        }
-
-        private static GameObject _litRoot;
-        private static LitCache _litCurrent;
-        private static Color _litColor;
-        private static readonly System.Collections.Generic.Dictionary<int, LitCache> _litCache = new System.Collections.Generic.Dictionary<int, LitCache>();
-
-        private static readonly Color HoverColor = new Color(1f, 0.72f, 0.12f);   // amber: "trigger will select this"
-        private static readonly Color SelectedColor = new Color(0.25f, 1f, 0.45f); // green: "the tablet controls this"
-
-        private static void UpdateGlow()
-        {
-            GameObject want = _hover != null ? _hover : _selected;
-            ApplyLit(want, _hover != null ? HoverColor : SelectedColor);
-        }
-
-        private static void UpdateSelectedGlow()
-        {
-            ApplyLit(BuildState.BuildMode ? _selected : null, SelectedColor);
-        }
-
-        private static LitCache BuildLitCache(GameObject root)
-        {
-            var cache = new LitCache();
-            var rends = new List<Renderer>(); var origs = new List<Material[]>(); var sets = new List<Material[]>();
-            var clones = new List<Material>(); var modes = new List<int>(); var ocols = new List<Color>();
-            foreach (var r in root.GetComponentsInChildren<Renderer>(true))
-            {
-                if (r == null) continue;
-                var mats = r.sharedMaterials;
-                if (mats == null || mats.Length == 0) continue;
-                var set = new Material[mats.Length];
-                for (int i = 0; i < mats.Length; i++)
-                {
-                    var src = mats[i];
-                    if (src == null) { set[i] = null; continue; }
-                    var m = new Material(src);
-                    set[i] = m; clones.Add(m);
-                    if (m.HasProperty("_EmissionColor")) { modes.Add(1); ocols.Add(Color.black); m.SetColor("_EmissionColor", HoverColor); }
-                    else if (m.HasProperty("_Color")) { Color oc = src.GetColor("_Color"); modes.Add(2); ocols.Add(oc); m.SetColor("_Color", Color.Lerp(oc, HoverColor, 0.6f)); }
-                    else { modes.Add(0); ocols.Add(Color.black); }
-                }
-                rends.Add(r); origs.Add(mats); sets.Add(set);
-            }
-            cache.Renderers = rends.ToArray(); cache.Originals = origs.ToArray(); cache.Sets = sets.ToArray();
-            cache.Clones = clones.ToArray(); cache.Modes = modes.ToArray(); cache.OrigColors = ocols.ToArray();
-            return cache;
-        }
-
-        private static void RecolorCache(LitCache cache, Color color)
-        {
-            for (int i = 0; i < cache.Clones.Length; i++)
-            {
-                try
-                {
-                    if (cache.Modes[i] == 1) cache.Clones[i].SetColor("_EmissionColor", color);
-                    else if (cache.Modes[i] == 2) cache.Clones[i].SetColor("_Color", Color.Lerp(cache.OrigColors[i], color, 0.6f));
-                }
-                catch { }
-            }
-        }
-
-        private static void ApplyLit(GameObject root, Color color)
-        {
-            if (root == _litRoot)
-            {
-                if (_litCurrent != null && _litColor != color) { _litColor = color; RecolorCache(_litCurrent, color); }
-                return;
-            }
-            ClearLit();
-            if (root == null) return;
+            if (_outline != null) return;
             try
             {
-                int id = root.GetInstanceID();
-                LitCache cache;
-                if (!_litCache.TryGetValue(id, out cache))
+                var go = new GameObject("ATTBuildingOutline");
+                go.layer = 2; // Ignore Raycast
+                UnityEngine.Object.DontDestroyOnLoad(go);
+                var comp = go.AddComponent(Il2CppType.Of<LineRenderer>());
+                _outline = comp == null ? null : comp.TryCast<LineRenderer>();
+                if (_outline != null)
                 {
-                    cache = BuildLitCache(root);
-                    _litCache[id] = cache;
+                    var shader = Shader.Find("Unlit/Color");
+                    if (shader == null) shader = Shader.Find("Sprites/Default");
+                    if (shader != null) _outline.material = new Material(shader);
+                    _outline.startWidth = 0.004f; _outline.endWidth = 0.004f;
+                    _outline.positionCount = BoxPath.Length;
+                    _outline.enabled = false;
                 }
-                for (int i = 0; i < cache.Renderers.Length; i++)
-                    if (cache.Renderers[i] != null) cache.Renderers[i].sharedMaterials = cache.Sets[i];
-                _litRoot = root; _litCurrent = cache; _litColor = HoverColor;
-                if (color != HoverColor) { _litColor = color; RecolorCache(cache, color); }
             }
-            catch (Exception ex) { Mod.LogOnce("builder highlight: " + ex.Message); ClearLit(); }
+            catch (Exception ex) { Mod.LogOnce("builder outline: " + ex.Message); }
         }
 
-        private static void ClearLit()
+        private static void SyncOutline()
         {
+            GameObject want = BuildState.BuildMode ? (_hover != null ? _hover : _selected) : null;
+            if (want == null) { HideOutline(); return; }
+            EnsureOutline();
+            if (_outline == null) return;
+            Color col = _hover != null ? HoverColor : SelectedColor;
             try
             {
-                if (_litCurrent != null)
+                if (want != _outlineRoot) { _outlineRoot = want; _outlineDirty = true; }
+                if (!_outline.enabled) _outline.enabled = true;
+                if (col != _outlineColor) { _outlineColor = col; _outline.startColor = col; _outline.endColor = col; }
+                if (_outlineDirty)
                 {
-                    for (int i = 0; i < _litCurrent.Renderers.Length; i++)
-                    {
-                        var r = _litCurrent.Renderers[i];
-                        if (r != null) r.sharedMaterials = _litCurrent.Originals[i];
-                    }
+                    _outlineDirty = false;
+                    Probe pr; Bounds box;
+                    if (_probes.TryGetValue(want.GetInstanceID(), out pr) && pr != null && pr.Root == want) box = pr.Box;
+                    else box = new Bounds(want.transform.position, new Vector3(0.3f, 0.3f, 0.3f));
+                    SetOutlineBox(box);
                 }
             }
             catch { }
-            _litCurrent = null;
-            _litRoot = null;
         }
 
-        // Called from SyncProbes: pieces that left the registry lose their
-        // cached materials (restored first if currently lit).
-        private static void PruneLitCache()
+        private static void SetOutlineBox(Bounds box)
         {
-            var dead = new List<int>();
-            foreach (var id in _litCache.Keys) if (!_probes.ContainsKey(id)) dead.Add(id);
-            foreach (var id in dead)
-            {
-                var cache = _litCache[id];
-                if (_litRoot != null && _litRoot.GetInstanceID() == id) ClearLit();
-                foreach (var m in cache.Clones) { try { if (m != null) UnityEngine.Object.Destroy(m); } catch { } }
-                _litCache.Remove(id);
-            }
+            Vector3 c = box.center, e = box.extents;
+            var corners = new Vector3[8];
+            corners[0] = c + new Vector3(-e.x, -e.y, -e.z);
+            corners[1] = c + new Vector3( e.x, -e.y, -e.z);
+            corners[2] = c + new Vector3(-e.x,  e.y, -e.z);
+            corners[3] = c + new Vector3( e.x,  e.y, -e.z);
+            corners[4] = c + new Vector3(-e.x, -e.y,  e.z);
+            corners[5] = c + new Vector3( e.x, -e.y,  e.z);
+            corners[6] = c + new Vector3( e.x,  e.y,  e.z);
+            corners[7] = c + new Vector3(-e.x,  e.y,  e.z);
+            for (int i = 0; i < BoxPath.Length; i++) _outline.SetPosition(i, corners[BoxPath[i]]);
+        }
+
+        private static void HideOutline()
+        {
+            _outlineRoot = null;
+            try { if (_outline != null && _outline.enabled) _outline.enabled = false; } catch { }
         }
 
         // ---- ray visual (line + impact dot; per-frame, from cached results) -----
@@ -764,6 +750,7 @@ namespace ATTBuildingQuest
         private static GameObject _dot;
         private static bool _fxReady;
         private static bool _lineOnTarget;
+        private static bool _dotShown;
 
         private static void EnsureFx()
         {
@@ -837,7 +824,7 @@ namespace ATTBuildingQuest
                 }
                 if (_dot != null)
                 {
-                    _dot.SetActive(onTarget);
+                    if (onTarget != _dotShown) { _dotShown = onTarget; _dot.SetActive(onTarget); }
                     if (onTarget) _dot.transform.position = _hitPoint;
                 }
             }
@@ -847,7 +834,7 @@ namespace ATTBuildingQuest
         private static void HideFx()
         {
             try { if (_line != null) _line.enabled = false; } catch { }
-            try { if (_dot != null) _dot.SetActive(false); } catch { }
+            try { if (_dot != null && _dotShown) { _dotShown = false; _dot.SetActive(false); } } catch { }
         }
 
         // ---- tablet operations on the selected piece ------------------------------
@@ -890,7 +877,7 @@ namespace ATTBuildingQuest
             }
             catch { }
             try { Spawner.LedgerUpdate(_selected); } catch { }
-            try { Probe pr; if (_probes.TryGetValue(_selectedId, out pr) && pr != null && pr.Root == _selected) RefreshProbe(pr); } catch { }
+            try { Probe pr; if (_probes.TryGetValue(_selectedId, out pr) && pr != null && pr.Root == _selected) { RefreshProbe(pr); if (_outlineRoot == _selected) _outlineDirty = true; } } catch { }
         }
 
         private static void Nudge(Vector3 right, Vector3 fwd, float sx, float sz)
@@ -979,7 +966,11 @@ namespace ATTBuildingQuest
         // available, dwell-select takes over (PollSelect above).
         private static class TriggerInput
         {
-            internal static bool Available { get { Ensure(); return _ok; } }
+            internal static bool Available { get { if (_dead) return false; Ensure(); return _ok; } }
+            internal static int FailStreak { get { return _failStreak; } }
+            private static int _failStreak;
+            private static bool _dead;
+            internal static void Warm() { Ensure(); }
 
             private static bool _ok;
             private static bool _tried;
@@ -997,8 +988,8 @@ namespace ATTBuildingQuest
 
             private static void Ensure()
             {
-                if (_ok || Time.unscaledTime < _nextTry) return;
-                _nextTry = Time.unscaledTime + 3f;
+                if (_ok || _dead || Time.unscaledTime < _nextTry) return;
+                _nextTry = Time.unscaledTime + 15f;
                 _tried = true;
                 try
                 {
@@ -1057,9 +1048,23 @@ namespace ATTBuildingQuest
                     bool down = okObj is bool && (bool)okObj && _tryArgs[1] is bool && (bool)_tryArgs[1];
                     bool edge = down && !prev;
                     prev = down;
+                    _failStreak = 0;
                     return edge;
                 }
-                catch { prev = false; return false; }
+                catch
+                {
+                    // Reflection across the IL2CPP boundary throwing every
+                    // poll is a frame killer (exception marshalling). Three
+                    // strikes and the trigger disables itself for the
+                    // session; dwell-select takes over.
+                    prev = false;
+                    if (++_failStreak >= 3 && !_dead)
+                    {
+                        _dead = true; _ok = false;
+                        Diag.Log("builder: XR trigger input failed repeatedly -- disabled for this session, dwell-select active (hold the ray on a piece ~1.25 s).");
+                    }
+                    return false;
+                }
             }
         }
     }

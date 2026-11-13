@@ -88,6 +88,29 @@ The 0.1-0.4 hand-grab pipeline is deleted. Build mode now works like this:
   tablet moves land on the position grid and rotations quantise to the
   snap angle, so pieces stay straight.
 
+## 0.5.4 notes
+
+- Hover lag round 3. The hit path is now pure float math and nothing
+  else: targeting is `Bounds.IntersectRay` against cached per-piece
+  AABBs (the `Collider.Raycast` mesh confirm is gone too), probes
+  reconcile incrementally (new pieces only; moved pieces slide their
+  cached box instead of rebuilding), and probe sync also self-heals
+  every 5 s.
+- The cloned-material mesh glow is DELETED. Cloning every material on
+  a prefab (shader-variant compiles) and swapping `sharedMaterials`
+  arrays on the Quest GPU was a prime suspect; the highlight is now
+  one reusable wire-box LineRenderer around the piece's bounds,
+  rewritten only when the target/box changes.
+- No file IO on hover change (hover logging was a synchronous
+  open/write/close on flash, fired by fingertip-ray flicker), and the
+  reflection XR trigger poll now counts failures and disables itself
+  after 3 (dwell-select takes over) instead of throwing across the
+  IL2CPP boundary forever. Trigger types resolve once at startup.
+- The ray tick is 10 Hz and timed: debug.log gains a
+  `builder perf: raytick avg X ms, max Y ms ...` line every 15 s
+  while build mode is on. If hover ever lags again, that line shows
+  whether our tick is the cost or the cost is elsewhere.
+
 ## 0.5.2 notes
 
 - Ray targeting no longer uses world physics at all. A `Physics.Raycast`

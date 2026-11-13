@@ -83,24 +83,29 @@ def test_ray_only_selects_tracked_spawns():
         b = read(f"{platform}/Builder.cs")
         # selection is gated on the tracked registry at every step (ancestor walk)
         assert "TrackedRegistry.Contains" in b and "TrackedRootOf" in b
-        # the highlight lights the prefab's actual renderers/materials
-        assert "GetComponentsInChildren<Renderer>" in b and "_EmissionColor" in b and "sharedMaterials" in b
+        # the highlight is ONE reusable wire-box LineRenderer: no cloned
+        # materials, no sharedMaterials swaps (Quest shader compiles were
+        # a frame killer); the impact dot is a plain primitive
+        assert "SyncOutline" in b and "SetOutlineBox" in b and "BuildLitCache" not in b
+        assert "sharedMaterials" not in "\n".join(l.split("//")[0] for l in b.splitlines()) and "new Material(src)" not in b
         assert "LineRenderer" in b and "ATTBuildingHitDot" in b
         # trigger is the XR trigger read reflectively (no new assembly
         # references); a dwell-select fallback covers rigs without it
         assert "UnityEngine.XR.InputDevices" in b and "triggerButton" in b and "1.25f" in b
-        # perf contract (0.5.2): NO world physics raycast at all -- the
-        # whole scene's broadphase (towns, forest mods) was the hover lag.
-        # Targeting is AABB math over cached per-piece probes, confirmed by
-        # Collider.Raycast on the winning piece only; highlight materials
-        # are built once per piece and cached; no pulse, no per-frame
-        # material calls; the trigger poll touches the ray hand only.
+        # perf contract (0.5.4): the hit path is pure float math. NO
+        # physics call of any kind (world Physics.Raycast AND the
+        # per-collider Collider.Raycast confirm are both gone), NO
+        # material cloning/swapping, NO file IO on hover change, and the
+        # reflection trigger poll disables itself after 3 failures.
+        # Targeting = Bounds.IntersectRay over cached per-piece probes
+        # at 10 Hz, timed by a Stopwatch perf report in debug.log.
         code_only = "\n".join(l.split("//")[0] for l in b.splitlines())
-        assert "Physics.Raycast(" not in code_only and "IntersectRay" in b and "Raycast(ray, out" in b
+        assert "Physics.Raycast(" not in code_only and ".Raycast(ray" not in code_only and "IntersectRay" in b
         assert "float d = 0f;" in b and "float d;" not in b  # CS0165: out-var must be pre-initialised
         assert "_probes" in b and "SyncProbes" in b and "ProbesDirty" in b and "ProbesDirty" in read(f"{platform}/Spawner.cs")
-        assert "_litCache" in b and "PulseLit" not in b and "PressedEdge(RayHand)" in b
-        assert "_nextRayTick" in b and "0.05f" in b and "RayHand" in b and "ClassifyHand" in b
+        assert "PressedEdge(RayHand)" in b and "_failStreak" in b and "_dead" in b and "TriggerInput.Warm()" in b
+        assert "builder perf" in b and "_perfWatch" in b and "builder: ray hovering" not in b
+        assert "_nextRayTick" in b and "0.1f" in b and "RayHand" in b and "ClassifyHand" in b
         # selected pieces are frozen (kinematic): a build piece never falls
         # through the world mid-edit (the falling Map Board lesson)
         assert "isKinematic" in b
@@ -190,9 +195,9 @@ def test_build_memory_persists_across_sessions():
 
 def test_versions_aligned():
     for f in ("quest/Main.cs", "pchost/Main.cs"):
-        assert 'Version = "0.5.3"' in read(f), f
+        assert 'Version = "0.5.4"' in read(f), f
     for p in ("quest/Properties/AssemblyInfo.cs", "pchost/Properties/AssemblyInfo.cs"):
-        assert '"0.5.3.0"' in read(p), p
+        assert '"0.5.4.0"' in read(p), p
 
 
 def test_reported_build_errors_stay_fixed():
