@@ -31,9 +31,9 @@
     <Reference Include="Il2CppRoot.Township"><HintPath>$(QuestReferenceDir)\Il2CppRoot.Township.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="Il2CppSystem.Core"><HintPath>$(QuestReferenceDir)\Il2CppSystem.Core.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="MelonLoader"><HintPath>$(QuestReferenceDir)\MelonLoader.dll</HintPath><Private>false</Private></Reference>
-    <!-- The TabletUILib MOD dll: drop TabletUILib.dll next to the interop DLLs
+    <!-- The TabletUILib MOD dll: drop TabletUILib-Quest.dll next to the interop DLLs
          (refs\quest) AND in the game's Mods folder -- it patches/ticks itself. -->
-    <Reference Include="TabletUILib"><HintPath>$(QuestReferenceDir)\TabletUILib.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="TabletUILib-Quest"><HintPath>$(QuestReferenceDir)\TabletUILib-Quest.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.CoreModule"><HintPath>$(QuestReferenceDir)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.PhysicsModule"><HintPath>$(QuestReferenceDir)\UnityEngine.PhysicsModule.dll</HintPath><Private>false</Private></Reference>
   </ItemGroup>

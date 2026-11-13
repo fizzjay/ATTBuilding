@@ -52,7 +52,11 @@ Each is isolated in one file per platform, deliberately:
   (Quest: `$(QuestReferenceDir)\TabletUILib.dll`, i.e. drop it in
   `refs/quest`; PC: plain `TabletUILib` reference like the others), and
   the DLL must **also be in the game's `Mods` folder**: its own mod
-  entrypoint does the Harmony patching and per-frame ticking. Our code
+  entrypoint does the Harmony patching and per-frame ticking. The DLLs
+  are named `TabletUILib-PC.dll` / `TabletUILib-Quest.dll`; the PC one is
+  built against **.NET Framework 4.8**, so the PC project targets v4.8 --
+  on a lower target MSBuild drops the reference with warning MSB3274 and
+  every `TabletUILib`/`Page` type then errors CS0246. Our code
   only uses the DLL's *public* API (`AddBubble`/`AddApp`, `IsShowing`,
   `Refresh`, `Close`, `Page`, `TabletBubble`) -- `TabletUI.Patch`,
   `TabletUI.Tick`, `TabletWheel` and `ServerMods.Start/Tick` are internal

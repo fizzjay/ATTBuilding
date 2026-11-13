@@ -14,7 +14,7 @@
          builds MSIL and warns MSB3270 (MSIL vs AMD64 mismatch). -->
     <PlatformTarget>x64</PlatformTarget>
     <Prefer32Bit>false</Prefer32Bit>
-    <TargetFrameworkVersion>v4.0</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <PlatformTarget>x64</PlatformTarget>
@@ -45,10 +45,12 @@
     <Reference Include="Alta.Singletons" />
     <Reference Include="Alta.Values" />
     <Reference Include="MelonLoader" />
-    <!-- The TabletUILib MOD dll: resolves like the other references (game folder /
-         refs\pc search path) and must ALSO be in the game's Mods folder --
-         it patches/ticks itself via its own mod entrypoint. -->
-    <Reference Include="TabletUILib" />
+    <!-- TabletUILib-PC.dll (built against .NET Framework 4.8 -- hence this
+         project's TargetFrameworkVersion v4.8; MSB3274 drops it otherwise).
+         Resolves like the other references (game folder / refs\pc search
+         path) and must ALSO be in the game's Mods folder: it patches and
+         ticks itself via its own mod entrypoint. -->
+    <Reference Include="TabletUILib-PC" />
     <Reference Include="Root.Township" />
     <Reference Include="System" />
     <Reference Include="System.Core" />

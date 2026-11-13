@@ -109,7 +109,8 @@ def test_prefabulizer_tablet_integration():
         # only touch its PUBLIC api: Patch/Tick/TabletWheel/ServerMods.Start
         # are internal to the DLL (its own mod entrypoint runs them), so
         # calling them is CS0117/CS0122 against the real DLL.
-        assert '<Reference Include="TabletUILib"' in proj, platform
+        dll = "TabletUILib-PC" if platform == "pchost" else "TabletUILib-Quest"
+        assert f'<Reference Include="{dll}"' in proj, platform
         assert "TabletUILib\\TabletUI.cs" not in proj and "TabletUILib\\TabletUIMod.cs" not in proj, platform
         assert "Builder.cs" in proj and "BuildMode.cs" not in proj, platform
         code = "\n".join(l.split("//")[0] for l in (main + builder).splitlines())
