@@ -78,6 +78,7 @@ namespace ATTBuildingQuest
         // (Main.Settings). Rotate amount reuses BuildState.AngleStepDegrees.
         internal static int RayHand;            // 0 = right (default), 1 = left
         internal static float RayLength = 20f;  // metres
+        internal static bool NewUi;             // test D-pad home (Settings toggle)
         private static float _moveStep = 0.1f;
         private static float _scaleStep = 1.25f;
         internal static float MoveStep { get { return _moveStep; } set { _moveStep = Mathf.Clamp(value, 0.005f, 2f); } }
@@ -117,20 +118,78 @@ namespace ATTBuildingQuest
         // ---- pages -----------------------------------------------------------
         private static Page ControlHomePage()
         {
+            if (NewUi) return NewUiHomePage();
             var p = new Page("PREFABULIZER", StatusText());
             p.Toggle("Build mode", () => BuildState.BuildMode, v => SetBuildMode(v));
             p.Toggle("Finger ray", () => RayOn, v => { RayOn = v; if (!v) { _hover = null; HideFx(); } });
+            p.Link("Open SETTINGS tablet", "amounts / ray / snapping", SettingsHomePage);
             p.Text("Controlling", SelectedLabel());
             p.Link("Move piece", F(_moveStep) + " m steps", MovePage);
             p.Link("Rotate piece", RotateStep() + " deg steps", RotatePage);
             p.Link("Scale piece", "x" + F(_scaleStep) + " steps", ScalePage);
             p.Link("Pieces", TrackedRegistry.Count + " spawned", PiecesPage);
             if (_selected != null) p.Link("DELETE selected piece", CleanName(_selected), DeleteConfirmPage);
-            p.Link("Settings tablet", "amounts / snapping / ray", SettingsHomePage);
             p.Link("How to use", "60-second guide", HelpPage);
             p.Button("Close tablet", delegate { try { TabletUI.Close(); } catch { } });
             p.Footer = "ATTBuilding " + Mod.Version + " -- point, trigger, build.";
             return p;
+        }
+
+        // New UI (test): the control home BECOMES the D-pad -- four
+        // direction buttons around a centre CLONE, raise/lower beneath,
+        // everything else one tap away under MORE. (The tablet renders
+        // rows, so the "quarter-circle" pad is a row layout evoking it.)
+        private static Page NewUiHomePage()
+        {
+            var p = new Page("PREFABULIZER", StatusText());
+            p.Toggle("Build mode", () => BuildState.BuildMode, v => SetBuildMode(v));
+            p.Toggle("Finger ray", () => RayOn, v => { RayOn = v; if (!v) { _hover = null; HideFx(); } });
+            p.Link("Open SETTINGS tablet", "amounts / ray / snapping", SettingsHomePage);
+            p.Text("Controlling", SelectedLabel());
+            if (_selected == null)
+            {
+                p.Text("Select a piece", "point the ray at it + pull the trigger");
+            }
+            else
+            {
+                string step = F(_moveStep) + " m";
+                p.Button("^ FORWARD", step, delegate { Nudge(HeadRight(), HeadFwd(), 0f, 1f); });
+                p.Button("< LEFT", step, delegate { Nudge(HeadRight(), HeadFwd(), -1f, 0f); });
+                p.Button("CLONE (copy)", "duplicate this piece", delegate { CloneSelected(); });
+                p.Button("RIGHT >", step, delegate { Nudge(HeadRight(), HeadFwd(), 1f, 0f); });
+                p.Button("v BACK", step, delegate { Nudge(HeadRight(), HeadFwd(), 0f, -1f); });
+                p.Button("RAISE", "+" + step, delegate { NudgeWorld(Vector3.up); });
+                p.Button("LOWER", "-" + step, delegate { NudgeWorld(Vector3.down); });
+            }
+            p.Link("More (rotate / scale / pieces)", MorePage);
+            if (_selected != null) p.Link("DELETE selected piece", CleanName(_selected), DeleteConfirmPage);
+            p.Button("Close tablet", delegate { try { TabletUI.Close(); } catch { } });
+            p.Footer = "ATTBuilding " + Mod.Version + " -- new UI (test). Classic pages live under Settings > New UI off.";
+            return p;
+        }
+
+        private static Page MorePage()
+        {
+            var p = new Page("MORE", StatusText());
+            p.Link("Rotate", RotateStep() + " deg steps", RotatePage);
+            p.Link("Scale", "x" + F(_scaleStep) + " steps", ScalePage);
+            p.Link("Pieces", TrackedRegistry.Count + " spawned", PiecesPage);
+            p.Link("Classic move page", F(_moveStep) + " m steps", MovePage);
+            p.Link("How to use", "60-second guide", HelpPage);
+            return p;
+        }
+
+        // Duplicate the selected piece through the normal spawn path (lands
+        // in front of you like a fresh spawn, fully tracked + remembered).
+        private static void CloneSelected()
+        {
+            if (_selected == null) { Note("Nothing selected to clone."); return; }
+            string what = null;
+            try { var np = _selected.GetComponent<NetworkPrefab>(); if (np != null) what = np.Hash.ToString(); } catch { }
+            if (string.IsNullOrEmpty(what)) what = CleanName(_selected);
+            string name = CleanName(_selected);
+            Spawner.SpawnByName(what, 1, delegate (string s) { Note(s); });
+            Note("Cloning '" + name + "' -- the copy lands in front of you; point + trigger it to control it.");
         }
 
         // The second tablet: everything about HOW MUCH things move, plus
@@ -139,6 +198,8 @@ namespace ATTBuildingQuest
         private static Page SettingsHomePage()
         {
             var p = new Page("PREFAB SETTINGS", "Amounts and behaviour -- saved automatically.");
+            p.Link("Open CONTROL tablet", "drive the selected piece", ControlHomePage);
+            p.Toggle("New UI (test D-pad home)", () => NewUi, v => { NewUi = v; Settings.Save(); try { TabletUI.Refresh(); } catch { } });
             p.Slider("Move amount (m)", () => _moveStep, v => { MoveStep = v; Settings.Save(); }, 0.01f, 1f, 0.01f);
             p.Choice("Move amount presets", StepLabels, () => NearestStepIdx(), v => { MoveStep = StepValues[Mathf.Clamp(v, 0, StepValues.Length - 1)]; Settings.Save(); });
             p.Slider("Rotate amount (deg)", () => BuildState.AngleStepDegrees, v => { BuildState.AngleStepDegrees = Mathf.Clamp(v, 1f, 90f); Settings.Save(); }, 1f, 90f, 1f);
@@ -148,7 +209,6 @@ namespace ATTBuildingQuest
             p.Choice("Ray hand", new[] { "Right", "Left" }, () => RayHand, v => { RayHand = Mathf.Clamp(v, 0, 1); Settings.Save(); });
             p.Slider("Ray length (m)", () => RayLength, v => { RayLength = Mathf.Clamp(v, 5f, 40f); Settings.Save(); }, 5f, 40f, 1f);
             p.Text("Trigger input", TriggerInput.StatusText());
-            p.Link("Back to control tablet", ControlHomePage);
             p.Footer = "ATTBuilding " + Mod.Version + " -- settings save automatically.";
             return p;
         }
@@ -225,6 +285,8 @@ namespace ATTBuildingQuest
                 p.Button("Spawn another", Spawner.LastSpawnName, delegate { Spawner.SpawnByName(Spawner.LastSpawnName, 1, delegate (string s) { Note(s); }); });
             else
                 p.Text("Spawn another", "spawn once from the console first");
+            if (_selected != null)
+                p.Button("Clone selected piece", CleanName(_selected), delegate { CloneSelected(); });
             if (_selected != null)
                 p.Button("DELETE selected piece", CleanName(_selected), delegate { DeleteSelected(); });
             if (TrackedRegistry.Count > 0)
@@ -304,6 +366,59 @@ namespace ATTBuildingQuest
         {
             if (_litRoot == _selected) ClearLit();
             _selected = null; _selectedId = 0; _scaleFactor = 1f;
+        }
+
+        // ---- probes: raycast-free targeting over OUR pieces only -------------
+        // A world Physics.Raycast ploughs through every collider near the ray
+        // (towns + mods like QuestForest pack in thousands), which is why
+        // hovering a prefab tanked the frame rate. Instead each tracked
+        // piece gets a cached probe (world AABB + its colliders): per ray
+        // tick we do float math against the boxes, then confirm against the
+        // winning piece's own colliders only (Collider.Raycast).
+        private sealed class Probe
+        {
+            public GameObject Root;
+            public Collider[] Colliders;
+            public Bounds Box;
+            public Vector3 Anchor; // root position when the box was computed
+        }
+
+        private static readonly System.Collections.Generic.Dictionary<int, Probe> _probes = new System.Collections.Generic.Dictionary<int, Probe>();
+        internal static bool ProbesDirty = true; // set by Spawner whenever tracking changes
+
+        private static Probe BuildProbe(GameObject go)
+        {
+            var cols = new System.Collections.Generic.List<Collider>();
+            Bounds box = new Bounds(go.transform.position, new Vector3(0.25f, 0.25f, 0.25f));
+            bool has = false;
+            foreach (var c in go.GetComponentsInChildren<Collider>(true))
+            {
+                if (c == null) continue;
+                cols.Add(c);
+                try { if (!has) { box = c.bounds; has = true; } else box.Encapsulate(c.bounds); } catch { }
+            }
+            return new Probe { Root = go, Colliders = cols.ToArray(), Box = box, Anchor = go.transform.position };
+        }
+
+        private static void RefreshProbe(Probe pr)
+        {
+            var fresh = BuildProbe(pr.Root);
+            pr.Colliders = fresh.Colliders; pr.Box = fresh.Box; pr.Anchor = fresh.Anchor;
+        }
+
+        private static void SyncProbes()
+        {
+            _probes.Clear();
+            var seen = new System.Collections.Generic.HashSet<int>();
+            foreach (int id in TrackedRegistry.Snapshot())
+            {
+                var go = Spawner.FindByInstanceId(id);
+                if (go == null) continue;
+                int rid = go.GetInstanceID();
+                if (seen.Add(rid)) _probes[rid] = BuildProbe(go);
+            }
+            ProbesDirty = false;
+            PruneLitCache();
         }
 
         // ---- finger ray (right hand by default; Settings can flip it) --------
@@ -404,28 +519,50 @@ namespace ATTBuildingQuest
             return null;
         }
 
-        // Runs at 20 Hz (see Tick): ONE raycast, from the chosen ray hand.
+        // Runs at 20 Hz (see Tick): no world physics -- box math against our
+        // pieces, then a mesh-accurate confirm on the winner's colliders.
         private static void UpdateRaycast()
         {
             Transform tip;
             var hand = RayHandTransform(out tip);
             if (hand == null) { SetHover(null); _hasHit = false; return; }
+            if (ProbesDirty) SyncProbes();
             Vector3 origin = tip != null ? tip.position : hand.position;
-            RaycastHit hit;
-            GameObject root = null;
-            if (Physics.Raycast(origin, hand.forward, out hit, RayLength, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
+            var ray = new Ray(origin, hand.forward);
+            GameObject best = null; float bestDist = float.MaxValue; Vector3 bestPoint = Vector3.zero;
+            foreach (var pair in _probes)
             {
-                root = TrackedRootOf(hit.collider == null ? null : hit.collider.transform);
-                if (root != null) { _hitPoint = hit.point; _hasHit = true; }
+                var pr = pair.Value;
+                if (pr.Root == null) { ProbesDirty = true; continue; }
+                if ((pr.Root.transform.position - pr.Anchor).sqrMagnitude > 0.0001f) RefreshProbe(pr); // moved by someone else
+                bool inside = pr.Box.Contains(origin);
+                float d;
+                if (!inside && !pr.Box.IntersectRay(ray, out d)) continue;
+                if (inside) d = 0f;
+                if (d > RayLength) continue;
+                float confirmedDist = float.MaxValue; Vector3 confirmedPoint = Vector3.zero; bool anyUsable = false;
+                foreach (var c in pr.Colliders)
+                {
+                    if (c == null || !c.enabled || c.isTrigger) continue;
+                    anyUsable = true;
+                    RaycastHit ch;
+                    if (c.Raycast(ray, out ch, RayLength) && ch.distance < confirmedDist) { confirmedDist = ch.distance; confirmedPoint = ch.point; }
+                }
+                float useDist; Vector3 usePoint;
+                if (confirmedDist != float.MaxValue) { useDist = confirmedDist; usePoint = confirmedPoint; }
+                else if (inside) { useDist = 0f; usePoint = origin; }
+                else if (!anyUsable) { useDist = d; usePoint = origin + hand.forward * d; }
+                else continue; // grazed the box, missed the mesh
+                if (useDist < bestDist) { bestDist = useDist; best = pr.Root; bestPoint = usePoint; }
             }
-            if (root == null) _hasHit = false;
-            SetHover(root);
-            if (root != null) PollSelect(root);
+            if (best != null) { _hitPoint = bestPoint; _hasHit = true; } else _hasHit = false;
+            SetHover(best);
+            if (best != null) PollSelect(best);
         }
 
         private static void SetHover(GameObject root)
         {
-            if (root == _hover) { UpdateGlow(); return; }
+            if (root == _hover) return;
             _hover = root;
             _dwellId = 0;
             if (root != null) Diag.FileOnly("builder: ray hovering '" + CleanName(root) + "' (trigger selects it).");
@@ -438,7 +575,7 @@ namespace ATTBuildingQuest
 
         private static void PollSelect(GameObject target)
         {
-            if (TriggerInput.PressedEdge()) { Select(target); return; }
+            if (TriggerInput.PressedEdge(RayHand)) { Select(target); return; }
             if (TriggerInput.Available) { _dwellId = 0; return; }
             // No XR trigger found on this rig: holding the ray steady on the
             // piece for ~1.25 s selects it instead (logged once at startup).
@@ -490,14 +627,23 @@ namespace ATTBuildingQuest
         }
 
         // ---- mesh highlight (the actual prefab meshes, never a box) --------------
+        // Materials are cloned ONCE per piece and cached: re-hovering just
+        // reassigns the cached arrays. No per-frame material calls at all
+        // (the old emissive pulse is gone -- steady glow reads cleaner too).
+        private sealed class LitCache
+        {
+            public Renderer[] Renderers;
+            public Material[][] Originals;
+            public Material[][] Sets;
+            public Material[] Clones;  // flat, parallel to Modes/OrigColors
+            public int[] Modes;        // 0 = untouched, 1 = emissive, 2 = colour-lerp
+            public Color[] OrigColors;
+        }
+
         private static GameObject _litRoot;
-        private static readonly List<Renderer> _litRenderers = new List<Renderer>();
-        private static readonly List<Material[]> _litOriginals = new List<Material[]>();
-        private static readonly List<Material> _litClones = new List<Material>();
-        private static readonly List<Color> _litBase = new List<Color>();
-        private static readonly List<bool> _litEmissive = new List<bool>();
-        private static bool _litPulse;
+        private static LitCache _litCurrent;
         private static Color _litColor;
+        private static readonly System.Collections.Generic.Dictionary<int, LitCache> _litCache = new System.Collections.Generic.Dictionary<int, LitCache>();
 
         private static readonly Color HoverColor = new Color(1f, 0.72f, 0.12f);   // amber: "trigger will select this"
         private static readonly Color SelectedColor = new Color(0.25f, 1f, 0.45f); // green: "the tablet controls this"
@@ -505,92 +651,119 @@ namespace ATTBuildingQuest
         private static void UpdateGlow()
         {
             GameObject want = _hover != null ? _hover : _selected;
-            ApplyLit(want, _hover != null ? HoverColor : SelectedColor, _hover != null);
+            ApplyLit(want, _hover != null ? HoverColor : SelectedColor);
         }
 
         private static void UpdateSelectedGlow()
         {
-            ApplyLit(BuildState.BuildMode ? _selected : null, SelectedColor, false);
+            ApplyLit(BuildState.BuildMode ? _selected : null, SelectedColor);
         }
 
-        private static void ApplyLit(GameObject root, Color color, bool pulse)
+        private static LitCache BuildLitCache(GameObject root)
+        {
+            var cache = new LitCache();
+            var rends = new List<Renderer>(); var origs = new List<Material[]>(); var sets = new List<Material[]>();
+            var clones = new List<Material>(); var modes = new List<int>(); var ocols = new List<Color>();
+            foreach (var r in root.GetComponentsInChildren<Renderer>(true))
+            {
+                if (r == null) continue;
+                var mats = r.sharedMaterials;
+                if (mats == null || mats.Length == 0) continue;
+                var set = new Material[mats.Length];
+                for (int i = 0; i < mats.Length; i++)
+                {
+                    var src = mats[i];
+                    if (src == null) { set[i] = null; continue; }
+                    var m = new Material(src);
+                    set[i] = m; clones.Add(m);
+                    if (m.HasProperty("_EmissionColor")) { modes.Add(1); ocols.Add(Color.black); m.SetColor("_EmissionColor", HoverColor); }
+                    else if (m.HasProperty("_Color")) { Color oc = src.GetColor("_Color"); modes.Add(2); ocols.Add(oc); m.SetColor("_Color", Color.Lerp(oc, HoverColor, 0.6f)); }
+                    else { modes.Add(0); ocols.Add(Color.black); }
+                }
+                rends.Add(r); origs.Add(mats); sets.Add(set);
+            }
+            cache.Renderers = rends.ToArray(); cache.Originals = origs.ToArray(); cache.Sets = sets.ToArray();
+            cache.Clones = clones.ToArray(); cache.Modes = modes.ToArray(); cache.OrigColors = ocols.ToArray();
+            return cache;
+        }
+
+        private static void RecolorCache(LitCache cache, Color color)
+        {
+            for (int i = 0; i < cache.Clones.Length; i++)
+            {
+                try
+                {
+                    if (cache.Modes[i] == 1) cache.Clones[i].SetColor("_EmissionColor", color);
+                    else if (cache.Modes[i] == 2) cache.Clones[i].SetColor("_Color", Color.Lerp(cache.OrigColors[i], color, 0.6f));
+                }
+                catch { }
+            }
+        }
+
+        private static void ApplyLit(GameObject root, Color color)
         {
             if (root == _litRoot)
             {
-                _litPulse = pulse;
-                if (_litColor != color)
-                {
-                    _litColor = color;
-                    for (int i = 0; i < _litClones.Count; i++)
-                    {
-                        _litBase[i] = color;
-                        try { if (_litEmissive[i]) _litClones[i].SetColor("_EmissionColor", color); } catch { }
-                    }
-                }
-                PulseLit();
+                if (_litCurrent != null && _litColor != color) { _litColor = color; RecolorCache(_litCurrent, color); }
                 return;
             }
             ClearLit();
             if (root == null) return;
             try
             {
-                foreach (var r in root.GetComponentsInChildren<Renderer>(true))
+                int id = root.GetInstanceID();
+                LitCache cache;
+                if (!_litCache.TryGetValue(id, out cache))
                 {
-                    if (r == null) continue;
-                    var mats = r.sharedMaterials;
-                    if (mats == null || mats.Length == 0) continue;
-                    var clones = new Material[mats.Length];
-                    for (int i = 0; i < mats.Length; i++)
-                    {
-                        var src = mats[i];
-                        if (src == null) { clones[i] = null; continue; }
-                        var m = new Material(src);
-                        clones[i] = m;
-                        _litClones.Add(m);
-                        if (m.HasProperty("_EmissionColor")) { m.SetColor("_EmissionColor", color); _litBase.Add(color); _litEmissive.Add(true); }
-                        else if (m.HasProperty("_Color")) { m.SetColor("_Color", Color.Lerp(src.GetColor("_Color"), color, 0.6f)); _litBase.Add(color); _litEmissive.Add(false); }
-                        else { _litBase.Add(color); _litEmissive.Add(false); }
-                    }
-                    _litRenderers.Add(r); _litOriginals.Add(mats);
-                    r.sharedMaterials = clones;
+                    cache = BuildLitCache(root);
+                    _litCache[id] = cache;
                 }
-                _litRoot = root; _litPulse = pulse; _litColor = color;
-                PulseLit();
+                for (int i = 0; i < cache.Renderers.Length; i++)
+                    if (cache.Renderers[i] != null) cache.Renderers[i].sharedMaterials = cache.Sets[i];
+                _litRoot = root; _litCurrent = cache; _litColor = HoverColor;
+                if (color != HoverColor) { _litColor = color; RecolorCache(cache, color); }
             }
             catch (Exception ex) { Mod.LogOnce("builder highlight: " + ex.Message); ClearLit(); }
-        }
-
-        private static void PulseLit()
-        {
-            if (_litRoot == null || !_litPulse) return;
-            float k = 0.6f + 0.4f * Mathf.Sin(Time.unscaledTime * 6f);
-            for (int i = 0; i < _litClones.Count; i++)
-            {
-                if (!_litEmissive[i]) continue;
-                try { _litClones[i].SetColor("_EmissionColor", _litBase[i] * k); } catch { }
-            }
         }
 
         private static void ClearLit()
         {
             try
             {
-                for (int i = 0; i < _litRenderers.Count; i++)
+                if (_litCurrent != null)
                 {
-                    var r = _litRenderers[i];
-                    if (r != null) r.sharedMaterials = _litOriginals[i];
+                    for (int i = 0; i < _litCurrent.Renderers.Length; i++)
+                    {
+                        var r = _litCurrent.Renderers[i];
+                        if (r != null) r.sharedMaterials = _litCurrent.Originals[i];
+                    }
                 }
             }
             catch { }
-            foreach (var m in _litClones) { try { if (m != null) UnityEngine.Object.Destroy(m); } catch { } }
-            _litRenderers.Clear(); _litOriginals.Clear(); _litClones.Clear(); _litBase.Clear(); _litEmissive.Clear();
+            _litCurrent = null;
             _litRoot = null;
+        }
+
+        // Called from SyncProbes: pieces that left the registry lose their
+        // cached materials (restored first if currently lit).
+        private static void PruneLitCache()
+        {
+            var dead = new List<int>();
+            foreach (var id in _litCache.Keys) if (!_probes.ContainsKey(id)) dead.Add(id);
+            foreach (var id in dead)
+            {
+                var cache = _litCache[id];
+                if (_litRoot != null && _litRoot.GetInstanceID() == id) ClearLit();
+                foreach (var m in cache.Clones) { try { if (m != null) UnityEngine.Object.Destroy(m); } catch { } }
+                _litCache.Remove(id);
+            }
         }
 
         // ---- ray visual (line + impact dot; per-frame, from cached results) -----
         private static LineRenderer _line;
         private static GameObject _dot;
         private static bool _fxReady;
+        private static bool _lineOnTarget;
 
         private static void EnsureFx()
         {
@@ -631,6 +804,7 @@ namespace ATTBuildingQuest
                         rend.material = m;
                     }
                 }
+                _dot.transform.localScale = new Vector3(0.024f, 0.024f, 0.024f);
                 _dot.SetActive(false);
             }
             catch (Exception ex) { Mod.LogOnce("builder ray fx: " + ex.Message); }
@@ -652,20 +826,19 @@ namespace ATTBuildingQuest
                 if (_line != null)
                 {
                     _line.enabled = true;
-                    var c = onTarget ? SelectedColor : HoverColor;
-                    _line.startColor = c; _line.endColor = c;
+                    if (onTarget != _lineOnTarget)
+                    {
+                        _lineOnTarget = onTarget;
+                        var c = onTarget ? SelectedColor : HoverColor;
+                        _line.startColor = c; _line.endColor = c;
+                    }
                     _line.SetPosition(0, origin);
                     _line.SetPosition(1, end);
                 }
                 if (_dot != null)
                 {
                     _dot.SetActive(onTarget);
-                    if (onTarget)
-                    {
-                        _dot.transform.position = _hitPoint;
-                        float s = 0.02f + 0.005f * Mathf.Sin(Time.unscaledTime * 6f);
-                        _dot.transform.localScale = new Vector3(s, s, s);
-                    }
+                    if (onTarget) _dot.transform.position = _hitPoint;
                 }
             }
             catch { }
@@ -717,6 +890,7 @@ namespace ATTBuildingQuest
             }
             catch { }
             try { Spawner.LedgerUpdate(_selected); } catch { }
+            try { Probe pr; if (_probes.TryGetValue(_selectedId, out pr) && pr != null && pr.Root == _selected) RefreshProbe(pr); } catch { }
         }
 
         private static void Nudge(Vector3 right, Vector3 fwd, float sx, float sz)
@@ -860,23 +1034,27 @@ namespace ATTBuildingQuest
                 catch (Exception ex) { Diag.FileOnly("builder xr resolve: " + ex.Message); }
             }
 
-            internal static bool PressedEdge()
+            private static readonly object[] _getArgs = new object[1];
+            private static object[] _tryArgs;
+
+            // Only the ray hand's device is polled (selection happens there).
+            internal static bool PressedEdge(int side)
             {
                 if (!Available) return false;
-                bool edge = Read(_nodeRight, ref _prevR);
-                edge = Read(_nodeLeft, ref _prevL) || edge;
-                return edge;
+                return side == 0 ? Read(_nodeRight, ref _prevR) : Read(_nodeLeft, ref _prevL);
             }
 
             private static bool Read(object node, ref bool prev)
             {
                 try
                 {
-                    object device = _getDevice.Invoke(null, new object[] { node });
+                    _getArgs[0] = node;
+                    object device = _getDevice.Invoke(null, _getArgs);
                     if (device == null) { prev = false; return false; }
-                    var args = new object[] { _usage, false };
-                    object okObj = _tryGet.Invoke(device, args);
-                    bool down = okObj is bool && (bool)okObj && args[1] is bool && (bool)args[1];
+                    if (_tryArgs == null) _tryArgs = new object[2];
+                    _tryArgs[0] = _usage; _tryArgs[1] = false;
+                    object okObj = _tryGet.Invoke(device, _tryArgs);
+                    bool down = okObj is bool && (bool)okObj && _tryArgs[1] is bool && (bool)_tryArgs[1];
                     bool edge = down && !prev;
                     prev = down;
                     return edge;

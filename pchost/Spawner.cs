@@ -241,6 +241,7 @@ namespace ATTBuilding
             var pickup = entity.gameObject.GetComponentInChildren<Pickup>();
             if (pickup != null) TrackedRegistry.Add(pickup.gameObject.GetInstanceID());
             try { LedgerAdopt(entity); } catch { }
+            Builder.ProbesDirty = true;
         }
 
         // Remove ONE tracked piece (the Prefabulizer's DELETE button).
@@ -335,6 +336,7 @@ namespace ATTBuilding
 
         internal static bool DespawnOne(int instanceId, Action<string> print)
         {
+            Builder.ProbesDirty = true;
             uint remoteId;
             if (_remoteIdByInstance.TryGetValue(instanceId, out remoteId))
             {
@@ -370,6 +372,7 @@ namespace ATTBuilding
 
         internal static void ClearSpawned(Action<string> print)
         {
+            Builder.ProbesDirty = true;
             int local = 0;
             foreach (int id in TrackedRegistry.Snapshot())
             {

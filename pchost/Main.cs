@@ -61,7 +61,7 @@ try
 
     internal static class Mod
     {
-        internal const string Version = "0.5.1";
+        internal const string Version = "0.5.2";
         internal static bool BubbleEnabled = true;
         internal static bool ConsoleEnabled = true;
         internal static bool SuppressDummy = true;
@@ -90,6 +90,7 @@ try
             Builder.ScaleStep = cat.CreateEntry("ScaleStep", 1.25f).Value;
             Builder.RayHand = cat.CreateEntry("RayHand", 0).Value;
             Builder.RayLength = cat.CreateEntry("RayLengthMetres", 20f).Value;
+            Builder.NewUi = cat.CreateEntry("NewUi", false).Value;
         }
         internal static void Save()
         {
@@ -104,6 +105,7 @@ try
                 if (e.Identifier == "ScaleStep") e.BoxedValue = Builder.ScaleStep;
                 if (e.Identifier == "RayHand") e.BoxedValue = Builder.RayHand;
                 if (e.Identifier == "RayLengthMetres") e.BoxedValue = Builder.RayLength;
+                if (e.Identifier == "NewUi") e.BoxedValue = Builder.NewUi;
             }
             MelonPreferences.Save();
         }

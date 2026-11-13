@@ -88,6 +88,29 @@ The 0.1-0.4 hand-grab pipeline is deleted. Build mode now works like this:
   tablet moves land on the position grid and rotations quantise to the
   snap angle, so pieces stay straight.
 
+## 0.5.2 notes
+
+- Ray targeting no longer uses world physics at all. A `Physics.Raycast`
+  crosses the broadphase of everything near the ray (in a forested town
+  that is thousands of colliders), which is why hovering a prefab still
+  tanked frames in 0.5.1. Each tracked piece now has a cached probe
+  (world AABB + collider list): the 20 Hz tick does float math per box,
+  then confirms with `Collider.Raycast` on the winning piece only.
+  Highlight materials are likewise built once per piece and cached
+  (hover changes just reassign arrays), the emissive pulse is deleted,
+  and the trigger poll reads only the ray hand's XR device.
+- New UI (test): Settings toggle `NewUi`. The control home becomes a
+  D-pad (FORWARD / LEFT / CLONE / RIGHT / BACK + RAISE / LOWER) with a
+  MORE page for rotate/scale/pieces. The tablet renders text rows, so
+  the quarter-circle pad is evoked by layout, not drawn.
+- Dual tablets: ATT gives each player exactly one Social Tablet item
+  (see `SocialTablet : ActionItem` -- one entity, one `Window`), and
+  TabletUILib binds its single view to the first local tablet it finds,
+  so two physical tablets cannot both run our UI. Instead the Control
+  and Settings tablets cross-open from each other's first row, share
+  all state, and never reset each other; the physical tablet also
+  hovers in front of you (`HoverPickup`) while you work the ray.
+
 ## 0.5.1 notes
 
 - Ray cost: the raycast + trigger poll run at 20 Hz from the chosen hand

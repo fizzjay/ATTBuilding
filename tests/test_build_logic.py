@@ -62,7 +62,7 @@ def test_no_grabbing_anywhere():
         builder = read(f"{platform}/Builder.cs")
         code_only = "\n".join(line.split("//")[0] for line in builder.splitlines())
         assert "Pickup" not in code_only, platform  # never add/fix/touch a Pickup again
-        assert "Bounds" not in code_only, platform  # highlight is the mesh, never a box proxy
+        assert "PrimitiveType.Cube" not in code_only, platform  # no box highlight proxy (Bounds math for targeting is fine)
         hook = read(f"{platform}/ConsoleHook.cs")
         for banned in ("EnsureMovable", "AddGrabHandle", "FixupPickup", "TickConsoleLock", "IsConsoleGrabbed", "ATTBuildingGrabHandle"):
             assert banned not in hook, (platform, banned)
@@ -85,16 +85,21 @@ def test_ray_only_selects_tracked_spawns():
         assert "TrackedRegistry.Contains" in b and "TrackedRootOf" in b
         # the highlight lights the prefab's actual renderers/materials
         assert "GetComponentsInChildren<Renderer>" in b and "_EmissionColor" in b and "sharedMaterials" in b
-        assert "Physics.Raycast" in b and "LineRenderer" in b
+        assert "LineRenderer" in b and "ATTBuildingHitDot" in b
         # trigger is the XR trigger read reflectively (no new assembly
         # references); a dwell-select fallback covers rigs without it
         assert "UnityEngine.XR.InputDevices" in b and "triggerButton" in b and "1.25f" in b
-        # perf contract (0.5.1): ONE raycast call site, right hand by
-        # default, throttled to 20 Hz -- the hover-only per-frame trigger
-        # polls and material pulses were the prefab-pointing lag
-        assert b.count("Physics.Raycast(") == 1 and "UpdateRaycast" in b
+        # perf contract (0.5.2): NO world physics raycast at all -- the
+        # whole scene's broadphase (towns, forest mods) was the hover lag.
+        # Targeting is AABB math over cached per-piece probes, confirmed by
+        # Collider.Raycast on the winning piece only; highlight materials
+        # are built once per piece and cached; no pulse, no per-frame
+        # material calls; the trigger poll touches the ray hand only.
+        code_only = "\n".join(l.split("//")[0] for l in b.splitlines())
+        assert "Physics.Raycast(" not in code_only and "IntersectRay" in b and "Raycast(ray, out" in b
+        assert "_probes" in b and "SyncProbes" in b and "ProbesDirty" in b and "ProbesDirty" in read(f"{platform}/Spawner.cs")
+        assert "_litCache" in b and "PulseLit" not in b and "PressedEdge(RayHand)" in b
         assert "_nextRayTick" in b and "0.05f" in b and "RayHand" in b and "ClassifyHand" in b
-        assert "ATTBuildingHitDot" in b  # impact dot: ray reads like a real feature
         # selected pieces are frozen (kinematic): a build piece never falls
         # through the world mid-edit (the falling Map Board lesson)
         assert "isKinematic" in b
@@ -106,8 +111,13 @@ def test_prefabulizer_tablet_integration():
         main = read(f"{platform}/Main.cs")
         proj = read(f"{platform}/ATTBuilding.csproj")
         assert '"Prefabulizer"' in builder and "AddBubble" in builder and ".App(" in builder
-        for page in ("ControlHomePage", "SettingsHomePage", "MovePage", "RotatePage", "ScalePage", "PiecesPage", "HelpPage", "DeleteConfirmPage"):
+        for page in ("ControlHomePage", "SettingsHomePage", "NewUiHomePage", "MorePage", "MovePage", "RotatePage", "ScalePage", "PiecesPage", "HelpPage", "DeleteConfirmPage"):
             assert page in builder, (platform, page)
+        # New UI test home: D-pad rows around a centre CLONE, persisted toggle
+        assert "CLONE (copy)" in builder and "CloneSelected" in builder and '"NewUi"' in main
+        # each tablet opens the other from its first rows (one physical
+        # tablet, two home stacks -- switching never resets state)
+        assert '"Open SETTINGS tablet"' in builder and '"Open CONTROL tablet"' in builder
         # two tablets, one shared state: control bubble + settings app
         assert "AddApp" in builder and '"Prefab Settings"' in builder
         # opening either tablet IS entering build mode (rising edge)
@@ -179,9 +189,9 @@ def test_build_memory_persists_across_sessions():
 
 def test_versions_aligned():
     for f in ("quest/Main.cs", "pchost/Main.cs"):
-        assert 'Version = "0.5.1"' in read(f), f
+        assert 'Version = "0.5.2"' in read(f), f
     for p in ("quest/Properties/AssemblyInfo.cs", "pchost/Properties/AssemblyInfo.cs"):
-        assert '"0.5.1.0"' in read(p), p
+        assert '"0.5.2.0"' in read(p), p
 
 
 def test_reported_build_errors_stay_fixed():
