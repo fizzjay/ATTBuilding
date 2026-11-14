@@ -185,6 +185,7 @@ namespace ATTBuilding
         private static readonly System.Collections.Generic.Dictionary<int, uint> _remoteIdByInstance = new System.Collections.Generic.Dictionary<int, uint>();
         private static float _nextTrackScan;
         private static readonly System.Collections.Generic.HashSet<uint> _ledgerAdopted = new System.Collections.Generic.HashSet<uint>();
+        private static System.Collections.Generic.HashSet<uint> _ledgerSeenLastScan = new System.Collections.Generic.HashSet<uint>();
         private static float _nextLedgerScan;
 
         internal static int PendingRemoteCount { get { return _pendingRemote.Count; } }
@@ -234,6 +235,10 @@ namespace ATTBuilding
                 + (_pendingRemote.Count > 0 ? " (+" + _pendingRemote.Count + " still arriving from the server)" : "") + ".";
         }
 
+        // Set by the Builder: receives every piece the moment it is tracked
+        // (fresh spawn or re-adoption). Used for direct-clone placement.
+        internal static System.Action<UnityEngine.GameObject> PieceTrackedHook;
+
         internal static void Track(NetworkEntity entity)
         {
             if (entity == null) return;
@@ -242,6 +247,8 @@ namespace ATTBuilding
             if (pickup != null) TrackedRegistry.Add(pickup.gameObject.GetInstanceID());
             try { LedgerAdopt(entity); } catch { }
             Builder.ProbesDirty = true;
+            var hook = PieceTrackedHook;
+            if (hook != null) { try { hook(entity.gameObject); } catch { } }
         }
 
         // Remove ONE tracked piece (the Prefabulizer's DELETE button).
@@ -292,46 +299,92 @@ namespace ATTBuilding
             });
         }
 
-        // Re-adopt pieces from previous sessions as they stream in. Runs at
-        // most every 2.5 s and only while un-adopted records remain.
+        // Re-adopt pieces from previous sessions as they stream in, and
+        // re-apply their saved placement (position/rotation/SCALE) when the
+        // server hands them back reset -- chunk reloads and restarts.
+        // Runs every 2.5 s while pieces still need adopting, 5 s otherwise.
         internal static void TickLedger()
         {
             try { SpawnLedger.Flush(); } catch { }
             if (SpawnLedger.Count == 0) return;
             if (UnityEngine.Time.time < _nextLedgerScan) return;
-            _nextLedgerScan = UnityEngine.Time.time + 2.5f;
-            if (PlayerController.Current == null) return;
             bool pending = false;
             foreach (var rec in SpawnLedger.Snapshot()) { if (!_ledgerAdopted.Contains(rec.EntityId)) { pending = true; break; } }
-            if (!pending) return;
+            _nextLedgerScan = UnityEngine.Time.time + (pending ? 2.5f : 5f);
+            if (PlayerController.Current == null) return;
+            var seenNow = new System.Collections.Generic.HashSet<uint>();
             try
             {
                 foreach (var entity in UnityEngine.Object.FindObjectsOfType<NetworkEntity>())
                 {
                     if (entity == null) continue;
                     uint id = (uint)entity.Identifier;
-                    if (id == 0 || _ledgerAdopted.Contains(id)) continue;
-                    var rec = SpawnLedger.Find(id);
-                    if (rec == null) continue;
+                    if (id == 0) continue;
+                    seenNow.Add(id);
                     var go = entity.gameObject;
-                    var np = go.GetComponent<NetworkPrefab>();
-                    if (!string.IsNullOrEmpty(rec.Hash) && np != null && np.Hash.ToString() != rec.Hash) continue; // same id, different piece (other server): not ours
-                    var tr = go.transform;
-                    var rp = new UnityEngine.Vector3(rec.Px, rec.Py, rec.Pz);
-                    bool drifted = (tr.position - rp).sqrMagnitude > 0.0004f;
-                    Track(entity); // registers + refreshes the ledger record
-                    if (drifted)
+                    if (_ledgerAdopted.Contains(id))
                     {
-                        tr.position = rp;
-                        tr.rotation = new UnityEngine.Quaternion(rec.Rx, rec.Ry, rec.Rz, rec.Rw);
-                        tr.localScale = new UnityEngine.Vector3(rec.Sx, rec.Sy, rec.Sz);
-                        var body = go.GetComponent<UnityEngine.Rigidbody>();
-                        if (body != null) { body.velocity = UnityEngine.Vector3.zero; body.angularVelocity = UnityEngine.Vector3.zero; }
+                        // Already ours this session. If it just re-streamed
+                        // in (chunk reload), the server hands it back with
+                        // its own saved transform -- scale included -- so
+                        // re-apply the remembered one.
+                        if (!_ledgerSeenLastScan.Contains(id))
+                        {
+                            var recK = SpawnLedger.Find(id);
+                            if (recK != null) RestoreIfDrifted(go, recK);
+                        }
+                        continue;
                     }
-                    Diag.Log("ledger: re-adopted '" + rec.Name + "' (entity " + id + ") from a previous session -- the Prefabulizer can edit it again.");
+                    var rec = SpawnLedger.Find(id);
+                    var np = go.GetComponent<NetworkPrefab>();
+                    string hash = np == null ? "" : np.Hash.ToString();
+                    bool fallback = false;
+                    if (rec == null && !string.IsNullOrEmpty(hash))
+                    {
+                        // The server restarted since this piece was saved,
+                        // so its entity id changed and the id lookup missed.
+                        // Claim the nearest unclaimed record of the same
+                        // prefab within 4 m instead.
+                        SpawnRecord best = null; float bestSq = 16f;
+                        foreach (var cand in SpawnLedger.Snapshot())
+                        {
+                            if (cand.Hash != hash || _ledgerAdopted.Contains(cand.EntityId)) continue;
+                            var cp = new UnityEngine.Vector3(cand.Px, cand.Py, cand.Pz);
+                            float sq = (go.transform.position - cp).sqrMagnitude;
+                            if (sq < bestSq) { bestSq = sq; best = cand; }
+                        }
+                        if (best != null) { rec = best; fallback = true; }
+                    }
+                    if (rec == null) continue;
+                    if (!string.IsNullOrEmpty(rec.Hash) && !string.IsNullOrEmpty(hash) && hash != rec.Hash) continue; // same id, different piece (other server): not ours
+                    if (fallback) { try { SpawnLedger.Remove(rec.EntityId); } catch { } } // consumed under its old id
+                    Track(entity); // registers + writes a fresh record under the CURRENT id
+                    RestoreIfDrifted(go, rec); // saved placement back on (position, rotation, scale)
+                    try { LedgerUpdate(go); } catch { } // record now holds the restored transform under the live id
+                    Diag.Log("ledger: re-adopted '" + rec.Name + "' (entity " + id + (fallback ? ", claimed by prefab+position after a server restart" : "") + ") from a previous session -- the Prefabulizer can edit it again.");
                 }
             }
             catch (Exception ex) { Mod.LogOnce("ledger scan: " + ex.Message); }
+            _ledgerSeenLastScan = seenNow;
+        }
+
+        // Applies the remembered transform when the live one has drifted
+        // (position, rotation OR scale -- the server resets all three when
+        // a piece streams back in).
+        private static void RestoreIfDrifted(UnityEngine.GameObject go, SpawnRecord rec)
+        {
+            var tr = go.transform;
+            var rp = new UnityEngine.Vector3(rec.Px, rec.Py, rec.Pz);
+            var rs = new UnityEngine.Vector3(rec.Sx, rec.Sy, rec.Sz);
+            var rr = new UnityEngine.Quaternion(rec.Rx, rec.Ry, rec.Rz, rec.Rw);
+            bool drifted = (tr.position - rp).sqrMagnitude > 0.0004f
+                || (tr.localScale - rs).sqrMagnitude > 0.0001f
+                || UnityEngine.Quaternion.Angle(tr.rotation, rr) > 1f;
+            if (!drifted) return;
+            tr.position = rp; tr.rotation = rr; tr.localScale = rs;
+            var body = go.GetComponent<UnityEngine.Rigidbody>();
+            if (body != null) { body.velocity = UnityEngine.Vector3.zero; body.angularVelocity = UnityEngine.Vector3.zero; }
+            Diag.Log("ledger: restored saved placement (incl. scale) on '" + rec.Name + "' after it streamed back in.");
         }
 
         internal static bool DespawnOne(int instanceId, Action<string> print)

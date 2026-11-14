@@ -187,18 +187,26 @@ def test_build_memory_persists_across_sessions():
         assert "shared\\SpawnLedger.cs" in proj, platform
         spawner = read(f"{platform}/Spawner.cs")
         assert "TickLedger" in spawner and "LedgerAdopt" in spawner and "LedgerUpdate" in spawner
+        # restart-proof: ids change when a server restarts, so pieces are
+        # also claimed by prefab hash + nearest saved position; re-streamed
+        # pieces get their saved SCALE back too (drift covers all three)
+        assert "RestoreIfDrifted" in spawner and "_ledgerSeenLastScan" in spawner and "claimed by prefab+position" in spawner
+        assert "tr.localScale = rs" in spawner and "PieceTrackedHook" in spawner
         assert "SpawnLedger.Remove" in spawner  # despawn/clear forget the piece
         assert "re-adopted" in spawner
         assert "SpawnLedger.Init" in read(f"{platform}/Main.cs"), platform
         builder = read(f"{platform}/Builder.cs")
         assert "Spawner.LedgerUpdate" in builder  # tablet edits refresh the record
+        # direct clone + 10 Hz gating of all state work
+        assert "OnPieceTracked" in builder and "transform.localScale = src.transform.localScale" in builder
+        assert "PieceTrackedHook = OnPieceTracked" in builder and "bool gated" in builder
 
 
 def test_versions_aligned():
     for f in ("quest/Main.cs", "pchost/Main.cs"):
-        assert 'Version = "0.5.5"' in read(f), f
+        assert 'Version = "0.5.6"' in read(f), f
     for p in ("quest/Properties/AssemblyInfo.cs", "pchost/Properties/AssemblyInfo.cs"):
-        assert '"0.5.5.0"' in read(p), p
+        assert '"0.5.6.0"' in read(p), p
 
 
 def test_reported_build_errors_stay_fixed():

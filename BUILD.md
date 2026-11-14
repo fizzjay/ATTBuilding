@@ -88,6 +88,25 @@ The 0.1-0.4 hand-grab pipeline is deleted. Build mode now works like this:
   tablet moves land on the position grid and rotations quantise to the
   snap angle, so pieces stay straight.
 
+## 0.5.6 notes
+
+- Select-after-restart: ledger re-adoption matched only the network
+  entity id, which a restarted server reassigns -- saved pieces were
+  never re-tracked. Unmatched streamed-in entities now claim the
+  nearest unclaimed ledger record with the same prefab hash (within
+  4 m) and the record is re-keyed to the live id.
+- Scale memory: the placement restore only ran at first adoption and
+  only compared position, so a chunk reload (server hands the piece
+  back at its own saved scale) silently lost tablet scaling. Adopted
+  pieces are now watched for re-streaming, and any drift in position,
+  rotation OR scale re-applies the remembered transform.
+- Direct clone: CLONE arms a one-shot intent; when the copy is
+  tracked it is placed exactly on the source (position, rotation,
+  scale) and auto-selected, ready to nudge away.
+- Perf: every Builder state check (tablet visibility, selection
+  validation) now runs on the 10 Hz gate; per frame only the ray
+  line/dot are repositioned.
+
 ## 0.5.4 notes
 
 - Hover lag round 3. The hit path is now pure float math and nothing

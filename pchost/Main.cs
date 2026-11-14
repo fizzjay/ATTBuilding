@@ -61,7 +61,7 @@ try
 
     internal static class Mod
     {
-        internal const string Version = "0.5.5";
+        internal const string Version = "0.5.6";
         internal static bool BubbleEnabled = true;
         internal static bool ConsoleEnabled = true;
         internal static bool SuppressDummy = true;

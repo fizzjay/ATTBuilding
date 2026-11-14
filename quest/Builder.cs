@@ -51,6 +51,7 @@ namespace ATTBuildingQuest
             TabletBubble bubble = TabletUI.AddBubble("Prefabulizer", "PFB");
             bubble.App("Prefabulizer", "PFB", ControlHomeFunc);
             TabletUI.AddApp("Prefab Settings", "SET", SettingsHomeFunc);
+            Spawner.PieceTrackedHook = OnPieceTracked; // direct-clone placement
             try { TriggerInput.Warm(); } catch { } // resolve XR types now, at load -- never during a hover
             Diag.Log("builder: Prefabulizer (control) + Prefab Settings tablets registered on the wrist wheel.");
         }
@@ -183,17 +184,52 @@ namespace ATTBuildingQuest
             return p;
         }
 
-        // Duplicate the selected piece through the normal spawn path (lands
-        // in front of you like a fresh spawn, fully tracked + remembered).
+        // Direct clone: the copy spawns through the normal path, and the
+        // moment it is tracked we place it EXACTLY on the source -- same
+        // position, rotation and scale -- and select it, ready to move.
+        private static GameObject _cloneSource;
+        private static string _cloneHash;
+        private static float _cloneUntil;
+
         private static void CloneSelected()
         {
             if (_selected == null) { Note("Nothing selected to clone."); return; }
             string what = null;
             try { var np = _selected.GetComponent<NetworkPrefab>(); if (np != null) what = np.Hash.ToString(); } catch { }
-            if (string.IsNullOrEmpty(what)) what = CleanName(_selected);
             string name = CleanName(_selected);
+            if (string.IsNullOrEmpty(what))
+            {
+                Spawner.SpawnByName(CleanName(_selected), 1, delegate (string s) { Note(s); });
+                Note("Cloning '" + name + "' -- the copy lands in front of you; point + trigger it to control it.");
+                return;
+            }
+            _cloneSource = _selected; _cloneHash = what; _cloneUntil = Time.unscaledTime + 25f;
             Spawner.SpawnByName(what, 1, delegate (string s) { Note(s); });
-            Note("Cloning '" + name + "' -- the copy lands in front of you; point + trigger it to control it.");
+            Note("Cloning '" + name + "' -- an exact copy (position, rotation, size) appears on top of it and becomes the selected piece; nudge it away.");
+        }
+
+        // Fired by Spawner.Track for every newly tracked piece.
+        private static void OnPieceTracked(GameObject go)
+        {
+            if (_cloneSource == null) return;
+            if (Time.unscaledTime > _cloneUntil) { _cloneSource = null; return; }
+            if (go == null || go == _cloneSource) return;
+            string hash = null;
+            try { var np = go.GetComponent<NetworkPrefab>(); if (np != null) hash = np.Hash.ToString(); } catch { }
+            if (hash == null || hash != _cloneHash) return; // a different spawn; keep waiting for ours
+            var src = _cloneSource; _cloneSource = null;
+            try
+            {
+                go.transform.position = src.transform.position;
+                go.transform.rotation = src.transform.rotation;
+                go.transform.localScale = src.transform.localScale;
+                var body = go.GetComponent<Rigidbody>();
+                if (body != null) { body.velocity = Vector3.zero; body.angularVelocity = Vector3.zero; }
+            }
+            catch { }
+            try { Spawner.LedgerUpdate(go); } catch { }
+            Select(go);
+            Note("Clone placed -- exact copy of '" + CleanName(src) + "' (same size and all), now selected.");
         }
 
         // The second tablet: everything about HOW MUCH things move, plus
@@ -328,49 +364,48 @@ namespace ATTBuildingQuest
         internal static void Tick()
         {
             // No TabletUI.Tick() here: it is internal to the TabletUILib DLL,
-            // whose own mod entrypoint ticks it. We only run the ray + watch
-            // for the tablet opening (rising edge -> build mode on).
+            // whose own mod entrypoint ticks it. Everything except the ray
+            // line/dot visuals runs on the 10 Hz gate below -- per frame,
+            // with build mode on, we only reposition two line points.
             if (!_registered) return;
-
-            bool showing = false;
-            try { showing = TabletUI.IsShowing(ControlHomeFunc) || TabletUI.IsShowing(SettingsHomeFunc); } catch { }
-            if (showing && !_wasShowing) SetBuildMode(true); // opening a tablet IS entering build mode
-            _wasShowing = showing;
-
-            ValidateSelection();
+            bool gated = Time.unscaledTime >= _nextRayTick;
+            if (gated)
+            {
+                _nextRayTick = Time.unscaledTime + 0.1f;
+                bool showing = false;
+                try { showing = TabletUI.IsShowing(ControlHomeFunc) || TabletUI.IsShowing(SettingsHomeFunc); } catch { }
+                if (showing && !_wasShowing) SetBuildMode(true); // opening a tablet IS entering build mode
+                _wasShowing = showing;
+                ValidateSelection();
+            }
             if (!BuildState.BuildMode)
             {
-                _hover = null; HideOutline(); HideFx(); _dwellId = 0;
+                if (gated) { _hover = null; HideOutline(); HideFx(); _dwellId = 0; }
                 return;
             }
             if (!RayOn)
             {
-                _hover = null; SyncOutline(); HideFx(); _dwellId = 0;
+                if (gated) { _hover = null; SyncOutline(); HideFx(); _dwellId = 0; }
                 return;
             }
-            // Targeting at 10 Hz; the visible line/dot still follow the hand
-            // every frame from the cached result, so aiming feels instant.
-            // The tick is timed: a one-line perf report lands in debug.log
-            // every 15 s so hover cost is measured, never guessed.
-            if (Time.unscaledTime >= _nextRayTick)
+            if (gated)
             {
-                _nextRayTick = Time.unscaledTime + 0.1f;
                 _perfWatch.Restart();
                 UpdateRaycast();
                 SyncOutline();
                 _perfWatch.Stop();
                 double ms = _perfWatch.Elapsed.TotalMilliseconds;
                 _perfTicks++; _perfMsTotal += ms; if (ms > _perfMsMax) _perfMsMax = ms;
-            }
-            if (Time.unscaledTime >= _perfNextReport)
-            {
-                _perfNextReport = Time.unscaledTime + 15f;
-                if (_perfTicks > 0)
-                    Diag.FileOnly("builder perf: raytick avg " + (_perfMsTotal / _perfTicks).ToString("0.00", CultureInfo.InvariantCulture)
-                        + " ms, max " + _perfMsMax.ToString("0.00", CultureInfo.InvariantCulture)
-                        + " ms over " + _perfTicks + " ticks; probes=" + _probes.Count
-                        + ", hoverChanges=" + _perfHoverChanges + ", triggerFailStreak=" + TriggerInput.FailStreak);
-                _perfTicks = 0; _perfMsTotal = 0; _perfMsMax = 0; _perfHoverChanges = 0;
+                if (Time.unscaledTime >= _perfNextReport)
+                {
+                    _perfNextReport = Time.unscaledTime + 15f;
+                    if (_perfTicks > 0)
+                        Diag.FileOnly("builder perf: raytick avg " + (_perfMsTotal / _perfTicks).ToString("0.00", CultureInfo.InvariantCulture)
+                            + " ms, max " + _perfMsMax.ToString("0.00", CultureInfo.InvariantCulture)
+                            + " ms over " + _perfTicks + " ticks; probes=" + _probes.Count
+                            + ", hoverChanges=" + _perfHoverChanges + ", triggerFailStreak=" + TriggerInput.FailStreak);
+                    _perfTicks = 0; _perfMsTotal = 0; _perfMsMax = 0; _perfHoverChanges = 0;
+                }
             }
             UpdateRayVisual();
         }
